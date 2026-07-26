@@ -153,13 +153,9 @@ GROQ_API_KEY=your_groq_key_here
 MODEL_NAME=llama-3.3-70b-versatile
 ```
 
-### Demo credentials (local only)
-| Email | Password | Role |
-|-------|----------|------|
-| admin@shearwater.com | Admin@123 | Admin |
-| auditor@shearwater.com | Auditor@123 | AI Governance Auditor |
-| dpo@shearwater.com | Dpo@123 | Data Protection Officer |
-| user@shearwater.com | User@123 | User |
+### Demo access
+Demo credentials are configured via environment variables (see `.env.example`).
+Contact the author via [LinkedIn](https://linkedin.com/in/zabeelbasheer) for evaluation access to the live demo.
 
 ---
 
