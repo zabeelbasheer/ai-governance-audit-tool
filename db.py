@@ -96,10 +96,10 @@ def init_db():
 
     # Seed demo users if not present
     seed_users = [
-        ("admin@shearwater.com",   "System Admin",             "admin",   "Admin@123"),
-        ("auditor@shearwater.com", "AI Governance Auditor",    "auditor", "Auditor@123"),
-        ("dpo@shearwater.com",     "Data Protection Officer",  "dpo",     "Dpo@123"),
-        ("user@shearwater.com",    "Demo User",                "user",    "User@123"),
+        ("admin@shearwater.com",   "System Admin",            "admin",   os.getenv("ADMIN_PASSWORD",   "changeme_admin")),
+        ("auditor@shearwater.com", "AI Governance Auditor",   "auditor", os.getenv("AUDITOR_PASSWORD", "changeme_auditor")),
+        ("dpo@shearwater.com",     "Data Protection Officer", "dpo",     os.getenv("DPO_PASSWORD",     "changeme_dpo")),
+        ("user@shearwater.com",    "Demo User",               "user",    os.getenv("USER_PASSWORD",    "changeme_user")),
     ]
     for email, name, role, pwd in seed_users:
         exists = conn.execute("SELECT id FROM users WHERE email = ?", (email,)).fetchone()
