@@ -28,7 +28,7 @@ def generate_text_report(eval_result: dict) -> str:
         lines.append("⚠  CRITICAL BLOCKERS (address before any deployment)")
         lines.append("-" * 40)
         for r in eval_result["critical_items"]:
-            lines.append(f"  [{r['id']}] {r['name']}")
+            lines.append(f"  [{r['criterion_id']}] {r['criterion_name']}")
             lines.append(f"  Rationale:   {r['rationale']}")
             lines.append(f"  Remediation: {r['remediation']}")
             lines.append("")
@@ -41,7 +41,7 @@ def generate_text_report(eval_result: dict) -> str:
         lines.append(label)
         lines.append("-" * 40)
         for r in items:
-            lines.append(f"  [{r['id']}] {r['name']}  —  Score: {r['score']}/5  |  {r['function']}")
+            lines.append(f"  [{r['criterion_id']}] {r['criterion_name']}  —  Score: {r['score']}/5  |  {r['function']}")
             lines.append(f"  {r['rationale']}")
             if r["remediation"]:
                 lines.append(f"  → {r['remediation']}")

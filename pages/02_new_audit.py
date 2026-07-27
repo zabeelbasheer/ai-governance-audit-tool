@@ -25,6 +25,8 @@ from datetime import datetime, timedelta
 
 st.set_page_config(page_title="New Audit", page_icon="🛡️", layout="wide")
 user = require_auth()
+from nav import render_nav
+render_nav(user)
 
 st.title("AI Governance Audit")
 st.caption(f"Signed in as **{user['display_name']}** · {ROLE_LABELS[user['role']]}")
@@ -190,7 +192,7 @@ if session["status"] in ("scored", "mentoring", "complete"):
     st.divider()
     st.subheader("Governance Radar")
 
-    functions   = ["GOVERN", "MAP", "MEASURE", "MANAGE", "HIPAA"]
+    functions   = ["GOVERN", "MAP", "MEASURE", "MANAGE", "HIPAA", "HITRUST"]
     fn_scores   = {}
     fn_max      = {}
 
