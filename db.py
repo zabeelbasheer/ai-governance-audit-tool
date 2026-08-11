@@ -9,6 +9,9 @@ Designed for zero-friction migration to PostgreSQL:
 import sqlite3
 import os
 from datetime import datetime
+from dotenv import load_dotenv
+
+load_dotenv()
 
 DB_PATH = os.path.join(os.path.dirname(__file__), "data", "governance.db")
 
@@ -49,6 +52,7 @@ def init_db():
         maturity_color    TEXT,
         maturity_desc     TEXT,
         status            TEXT NOT NULL DEFAULT 'intake',
+        vendor_name       TEXT,
         created_at        TEXT NOT NULL DEFAULT (datetime('now')),
         updated_at        TEXT NOT NULL DEFAULT (datetime('now'))
     );
@@ -173,6 +177,17 @@ def update_session_status(session_id: int, status: str):
     conn.execute(
         "UPDATE audit_sessions SET status=?, updated_at=? WHERE id=?",
         (status, datetime.now().isoformat(), session_id)
+    )
+    conn.commit()
+    conn.close()
+
+
+def update_session_vendor(session_id: int, vendor_name: str):
+    """Store the vendor name against an audit session."""
+    conn = get_conn()
+    conn.execute(
+        "UPDATE audit_sessions SET vendor_name=?, updated_at=? WHERE id=?",
+        (vendor_name, datetime.now().isoformat(), session_id)
     )
     conn.commit()
     conn.close()

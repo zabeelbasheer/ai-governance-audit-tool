@@ -69,9 +69,46 @@ def render_login():
         border-top: 1px solid #eee;
     }
     </style>
-    <div class="login-container">
-        <div class="login-logo">🛡️ AI Governance Audit</div>
-        <div class="login-sub">Sign in with your organizational account</div>
+    <style>
+    .login-wrap {
+        max-width: 420px;
+        margin: 60px auto 0;
+        padding: 40px;
+        border: 1px solid #d8d4cc;
+        border-radius: 8px;
+        background: #fff;
+    }
+    .login-sub {
+        font-size: 13px;
+        color: #666;
+        margin-bottom: 28px;
+    }
+    .login-notice {
+        font-size: 11px;
+        color: #999;
+        margin-top: 20px;
+        padding-top: 16px;
+        border-top: 1px solid #eee;
+        text-align: center;
+    }
+    </style>
+    <div class="login-wrap">
+      <div style="display:flex;align-items:center;gap:12px;margin-bottom:6px">
+        <div style="width:40px;height:40px;border-radius:50%;background:#1a3347;
+                    border:2px solid #e8a020;display:flex;align-items:center;
+                    justify-content:center;flex-shrink:0">
+          <svg width="20" height="20" viewBox="0 0 22 22" xmlns="http://www.w3.org/2000/svg">
+            <line x1="4" y1="5" x2="18" y2="5" stroke="#e8a020" stroke-width="2.5" stroke-linecap="round"/>
+            <path d="M16 5 Q18 11 4 17" fill="none" stroke="#e8a020" stroke-width="2.5" stroke-linecap="round"/>
+            <line x1="4" y1="17" x2="18" y2="17" stroke="#e8a020" stroke-width="2.5" stroke-linecap="round"/>
+          </svg>
+        </div>
+        <div>
+          <div style="font-size:8px;color:#b8760a;letter-spacing:2.5px;font-weight:700">ZETA HEALTH AI</div>
+          <div style="font-size:18px;font-weight:700;color:#0f1e2d;font-family:Georgia,serif;line-height:1.1">Governance Audit</div>
+        </div>
+      </div>
+      <div class="login-sub">Sign in with your organisational account</div>
     </div>
     """, unsafe_allow_html=True)
 
