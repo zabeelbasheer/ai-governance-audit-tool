@@ -45,7 +45,7 @@ def get_client():
 
 
 def get_model():
-    return os.getenv("MODEL_NAME", "llama-3.3-70b-versatile")
+    return os.getenv("MODEL_NAME", "openai/gpt-oss-120b")
 
 
 def get_mentor_opening(criterion: dict, use_case: str) -> str:

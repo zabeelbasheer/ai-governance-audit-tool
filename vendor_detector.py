@@ -38,7 +38,7 @@ def detect_vendor_llm(use_case: str) -> dict:
     try:
         client = Groq(api_key=os.getenv("GROQ_API_KEY"))
         response = client.chat.completions.create(
-            model=os.getenv("MODEL_NAME", "llama-3.3-70b-versatile"),
+            model=os.getenv("MODEL_NAME", "openai/gpt-oss-120b"),
             messages=[
                 {"role": "system", "content": DETECTION_PROMPT},
                 {"role": "user",   "content": f"Use case:\n{use_case}"},

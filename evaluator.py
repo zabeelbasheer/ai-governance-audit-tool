@@ -75,7 +75,7 @@ def evaluate_criterion(client: Groq, use_case: str, criterion: dict,
                        vendor_name: str = None) -> dict:
     try:
         response = client.chat.completions.create(
-            model=os.getenv("MODEL_NAME", "llama-3.3-70b-versatile"),
+            model=os.getenv("MODEL_NAME", "openai/gpt-oss-120b"),
             messages=[
                 {"role": "system", "content": SYSTEM_PROMPT},
                 {"role": "user",   "content": build_user_prompt(
