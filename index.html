@@ -1,0 +1,434 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Zeta Health AI · Governance Audit</title>
+<style>
+*, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+:root {
+  --midnight:  #0f1e2d;
+  --navy:      #1a3347;
+  --gold:      #e8a020;
+  --amber:     #b8760a;
+  --parchment: #f7f4ee;
+  --sky:       #8fa8bf;
+  --ocean:     #2a5070;
+  --border:    #d8d4cc;
+  --white:     #ffffff;
+}
+
+body {
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  background: var(--parchment);
+  color: var(--midnight);
+  min-height: 100vh;
+}
+
+.hidden { display: none !important; }
+
+/* ── Zeta mark, reused everywhere ─────────────────────────────────────── */
+.zeta-mark {
+  border-radius: 50%;
+  background: var(--navy);
+  border: 2px solid var(--gold);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+}
+
+/* ── Login view ────────────────────────────────────────────────────────── */
+#login-view {
+  min-height: 100vh;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 24px;
+}
+
+.login-card {
+  width: 100%;
+  max-width: 420px;
+  background: var(--white);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 40px;
+}
+
+.login-brand { display: flex; align-items: center; gap: 12px; margin-bottom: 6px; }
+.login-eyebrow { font-size: 8px; color: var(--amber); letter-spacing: 2.5px; font-weight: 700; }
+.login-title { font-size: 18px; font-weight: 700; color: var(--midnight); font-family: Georgia, serif; line-height: 1.1; }
+.login-sub { font-size: 13px; color: var(--sky); margin: 8px 0 24px; }
+
+.field-label { font-size: 12px; color: var(--ocean); margin-bottom: 6px; display: block; }
+.field-input {
+  width: 100%;
+  padding: 10px 12px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  font-size: 13px;
+  color: var(--midnight);
+  margin-bottom: 16px;
+  outline: none;
+}
+.field-input:focus { border-color: var(--gold); }
+
+.btn-primary {
+  width: 100%;
+  background: var(--gold);
+  color: var(--midnight);
+  border: none;
+  border-radius: 6px;
+  padding: 11px 0;
+  font-size: 13px;
+  font-weight: 700;
+  cursor: pointer;
+}
+.btn-primary:hover { background: var(--amber); color: var(--white); }
+
+.login-error {
+  font-size: 12px;
+  color: #c0392b;
+  margin-top: 12px;
+}
+
+.login-notice {
+  font-size: 11px;
+  color: var(--sky);
+  margin-top: 20px;
+  padding-top: 16px;
+  border-top: 1px solid var(--border);
+  text-align: center;
+  line-height: 1.6;
+}
+.login-notice strong { color: var(--ocean); }
+
+/* ── Dashboard view ────────────────────────────────────────────────────── */
+.header {
+  background: var(--white);
+  border-bottom: 1px solid var(--border);
+  padding: 16px 28px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 12px;
+}
+.header-left { display: flex; align-items: center; gap: 14px; }
+.header-eyebrow { font-size: 9px; color: var(--amber); letter-spacing: 2.5px; font-weight: 700; }
+.header-title { font-size: 22px; font-weight: 700; color: var(--midnight); font-family: Georgia, serif; line-height: 1.1; }
+.header-tagline { font-size: 11px; color: var(--ocean); margin-top: 2px; }
+
+.header-right { display: flex; align-items: center; gap: 16px; }
+.user-block { text-align: right; }
+.user-name { font-size: 12px; font-weight: 700; color: var(--midnight); }
+.user-role { font-size: 10px; color: var(--sky); }
+.btn-ghost {
+  background: transparent;
+  border: 1px solid var(--border);
+  color: var(--midnight);
+  border-radius: 6px;
+  padding: 7px 14px;
+  font-size: 12px;
+  cursor: pointer;
+}
+.btn-ghost:hover { border-color: var(--amber); color: var(--amber); }
+
+.body-wrap { padding: 24px 28px; max-width: 1100px; margin: 0 auto; }
+
+.toolbar { display: flex; align-items: center; gap: 12px; margin-bottom: 16px; flex-wrap: wrap; }
+.section-title { font-size: 16px; font-weight: 500; color: var(--midnight); }
+.section-caption { font-size: 12px; color: var(--sky); margin-top: 2px; }
+
+.search-input {
+  flex: 1;
+  min-width: 200px;
+  padding: 9px 12px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  font-size: 13px;
+  color: var(--midnight);
+  outline: none;
+}
+.search-input:focus { border-color: var(--gold); }
+
+.btn-new {
+  background: var(--gold);
+  color: var(--midnight);
+  border: none;
+  border-radius: 6px;
+  padding: 10px 18px;
+  font-size: 12px;
+  font-weight: 700;
+  cursor: pointer;
+  white-space: nowrap;
+}
+.btn-new:hover { background: var(--amber); color: var(--white); }
+
+.phase-note {
+  font-size: 11px;
+  color: var(--ocean);
+  background: var(--white);
+  border: 1px solid var(--border);
+  border-left: 3px solid var(--gold);
+  border-radius: 0 6px 6px 0;
+  padding: 8px 12px;
+  margin-bottom: 16px;
+}
+
+table { width: 100%; border-collapse: collapse; background: var(--white); border-radius: 12px; overflow: hidden; }
+thead th {
+  text-align: left;
+  font-size: 11px;
+  color: var(--sky);
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  padding: 12px 16px;
+  border-bottom: 1px solid var(--border);
+}
+tbody td { padding: 12px 16px; font-size: 13px; color: var(--midnight); border-bottom: 1px solid var(--border); vertical-align: top; }
+tbody tr:last-child td { border-bottom: none; }
+tbody tr:hover { background: var(--parchment); }
+
+.cell-title { font-weight: 500; }
+.cell-sub { font-size: 11px; color: var(--sky); margin-top: 2px; }
+
+.maturity-pill { display: inline-block; padding: 3px 10px; border-radius: 20px; font-size: 11px; font-weight: 700; color: var(--white); }
+
+.status-dot { display: inline-flex; align-items: center; gap: 6px; font-size: 12px; color: var(--midnight); }
+.status-dot::before { content: ""; width: 7px; height: 7px; border-radius: 50%; background: var(--sky); }
+.status-dot.st-intake::before    { background: var(--sky); }
+.status-dot.st-scored::before    { background: var(--gold); }
+.status-dot.st-mentoring::before { background: var(--amber); }
+.status-dot.st-complete::before  { background: #27ae60; }
+
+.btn-open {
+  background: transparent;
+  border: 1px solid var(--border);
+  color: var(--ocean);
+  border-radius: 6px;
+  padding: 5px 12px;
+  font-size: 11px;
+  cursor: pointer;
+}
+.btn-open:hover { border-color: var(--gold); color: var(--amber); }
+
+.empty-state { background: var(--white); border-radius: 12px; padding: 40px; text-align: center; color: var(--sky); font-size: 13px; }
+</style>
+</head>
+<body>
+
+<div id="login-view">
+  <div class="login-card">
+    <div class="login-brand">
+      <svg width="40" height="40" viewBox="0 0 22 22" class="zeta-mark" style="width:40px;height:40px">
+        <line x1="4" y1="5" x2="18" y2="5" stroke="#e8a020" stroke-width="2.5" stroke-linecap="round"/>
+        <path d="M16 5 Q18 11 4 17" fill="none" stroke="#e8a020" stroke-width="2.5" stroke-linecap="round"/>
+        <line x1="4" y1="17" x2="18" y2="17" stroke="#e8a020" stroke-width="2.5" stroke-linecap="round"/>
+      </svg>
+      <div>
+        <div class="login-eyebrow">ZETA HEALTH AI</div>
+        <div class="login-title">Governance Audit</div>
+      </div>
+    </div>
+    <div class="login-sub">Sign in with your organisational account</div>
+
+    <label class="field-label" for="email">Email address</label>
+    <input class="field-input" id="email" type="email" placeholder="you@shearwater.com">
+
+    <label class="field-label" for="password">Password</label>
+    <input class="field-input" id="password" type="password">
+
+    <button class="btn-primary" id="login-btn">Sign in</button>
+    <div class="login-error hidden" id="login-error"></div>
+
+    <div class="login-notice">
+      This system is for authorized users only. All activity is logged.<br>
+      <strong>Single sign-on (AD) integration active in production.</strong>
+    </div>
+  </div>
+</div>
+
+<div id="dashboard-view" class="hidden">
+  <div class="header">
+    <div class="header-left">
+      <svg width="44" height="44" viewBox="0 0 22 22" class="zeta-mark" style="width:44px;height:44px">
+        <line x1="4" y1="5" x2="18" y2="5" stroke="#e8a020" stroke-width="2.5" stroke-linecap="round"/>
+        <path d="M16 5 Q18 11 4 17" fill="none" stroke="#e8a020" stroke-width="2.5" stroke-linecap="round"/>
+        <line x1="4" y1="17" x2="18" y2="17" stroke="#e8a020" stroke-width="2.5" stroke-linecap="round"/>
+      </svg>
+      <div>
+        <div class="header-eyebrow">ZETA HEALTH AI</div>
+        <div class="header-title">Governance Audit</div>
+        <div class="header-tagline">Clinical operations, intelligently governed.</div>
+      </div>
+    </div>
+    <div class="header-right">
+      <div class="user-block">
+        <div class="user-name" id="user-name"></div>
+        <div class="user-role" id="user-role"></div>
+      </div>
+      <button class="btn-ghost" id="signout-btn">Sign out</button>
+    </div>
+  </div>
+
+  <div class="body-wrap">
+    <div style="margin-bottom:16px">
+      <div class="section-title" id="sessions-heading">My audit sessions</div>
+      <div class="section-caption" id="sessions-caption"></div>
+    </div>
+
+    <div class="toolbar">
+      <input class="search-input" id="search-input" placeholder="Search by user, title, score, or vendor…">
+      <button class="btn-new" id="new-audit-btn">+ New audit</button>
+    </div>
+
+    <div class="phase-note">Phase 1 build: dashboard and auth only. New audit, mentoring, and checklist open in later phases.</div>
+
+    <div id="sessions-table-wrap"></div>
+  </div>
+</div>
+
+<script>
+const STATUS_LABELS = { intake: "In progress", scored: "Scored", mentoring: "In review", complete: "Action pending" };
+const MATURITY_COLORS = { Emerging: "#c0392b", Developing: "#e67e22", Established: "#f1c40f", Mature: "#27ae60" };
+
+const loginView = document.getElementById('login-view');
+const dashboardView = document.getElementById('dashboard-view');
+const loginError = document.getElementById('login-error');
+
+async function api(path, opts = {}) {
+  const res = await fetch(path, {
+    headers: { 'Content-Type': 'application/json' },
+    credentials: 'same-origin',
+    ...opts,
+  });
+  if (!res.ok) {
+    const body = await res.json().catch(() => ({}));
+    throw new Error(body.detail || 'Request failed');
+  }
+  return res.json();
+}
+
+function escapeHtml(s) {
+  return (s ?? '').toString().replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+}
+
+function renderSessions(data) {
+  document.getElementById('sessions-heading').textContent = data.can_view_all ? 'All audit sessions' : 'My audit sessions';
+  document.getElementById('sessions-caption').textContent = data.can_view_all
+    ? 'You have elevated access, viewing all organisational audits.'
+    : '';
+
+  const wrap = document.getElementById('sessions-table-wrap');
+  if (!data.sessions.length) {
+    wrap.innerHTML = '<div class="empty-state">No audits found. Start a new audit to get going.</div>';
+    return;
+  }
+
+  const rows = data.sessions.map(s => {
+    const color = MATURITY_COLORS[s.maturity_label] || '#8fa8bf';
+    const maturity = s.maturity_label
+      ? `<span class="maturity-pill" style="background:${color}">${escapeHtml(s.maturity_label)}</span>`
+      : '—';
+    const statusClass = 'st-' + (s.status || 'intake');
+    const statusLabel = STATUS_LABELS[s.status] || s.status;
+    const score = s.overall_pct != null ? `${s.overall_pct}%` : '—';
+    const dateStr = (s.created_at || '').slice(0, 10);
+
+    return `<tr>
+      <td>
+        <div class="cell-title">${escapeHtml(s.title)}</div>
+        <div class="cell-sub">${escapeHtml(dateStr)}</div>
+      </td>
+      <td>
+        <div>${escapeHtml(s.display_name || '—')}</div>
+        <div class="cell-sub">${escapeHtml(s.email || '')}</div>
+      </td>
+      <td>${escapeHtml(s.vendor_name || '—')}</td>
+      <td>${score}</td>
+      <td>${maturity}</td>
+      <td><span class="status-dot ${statusClass}">${escapeHtml(statusLabel)}</span></td>
+      <td><button class="btn-open" data-id="${s.id}">Open</button></td>
+    </tr>`;
+  }).join('');
+
+  wrap.innerHTML = `<table>
+    <thead><tr>
+      <th>Audit title</th><th>Submitted by</th><th>Vendor</th><th>Score</th><th>Maturity</th><th>Status</th><th>Action</th>
+    </tr></thead>
+    <tbody>${rows}</tbody>
+  </table>`;
+
+  wrap.querySelectorAll('.btn-open').forEach(btn => {
+    btn.addEventListener('click', () => alert('Opens the audit detail view in phase 2.'));
+  });
+}
+
+async function loadSessions(q = '') {
+  const data = await api('/api/sessions' + (q ? `?q=${encodeURIComponent(q)}` : ''));
+  renderSessions(data);
+}
+
+function showDashboard(user, roleLabel) {
+  loginView.classList.add('hidden');
+  dashboardView.classList.remove('hidden');
+  document.getElementById('user-name').textContent = user.display_name;
+  document.getElementById('user-role').textContent = roleLabel;
+  loadSessions();
+}
+
+async function checkSession() {
+  try {
+    const data = await api('/api/me');
+    showDashboard(data.user, data.role_label);
+  } catch {
+    loginView.classList.remove('hidden');
+    dashboardView.classList.add('hidden');
+  }
+}
+
+document.getElementById('login-btn').addEventListener('click', async () => {
+  loginError.classList.add('hidden');
+  const email = document.getElementById('email').value.trim();
+  const password = document.getElementById('password').value;
+  if (!email || !password) {
+    loginError.textContent = 'Enter your email and password.';
+    loginError.classList.remove('hidden');
+    return;
+  }
+  try {
+    const data = await api('/api/login', { method: 'POST', body: JSON.stringify({ email, password }) });
+    showDashboard(data.user, data.role_label);
+  } catch (err) {
+    loginError.textContent = err.message;
+    loginError.classList.remove('hidden');
+  }
+});
+
+document.getElementById('password').addEventListener('keydown', e => {
+  if (e.key === 'Enter') document.getElementById('login-btn').click();
+});
+
+document.getElementById('signout-btn').addEventListener('click', async () => {
+  await api('/api/logout', { method: 'POST' });
+  location.reload();
+});
+
+document.getElementById('new-audit-btn').addEventListener('click', () => {
+  alert('New audit intake, vendor detection, and scoring build in phase 2.');
+});
+
+let searchTimer;
+document.getElementById('search-input').addEventListener('input', e => {
+  clearTimeout(searchTimer);
+  const q = e.target.value;
+  searchTimer = setTimeout(() => loadSessions(q), 250);
+});
+
+checkSession();
+</script>
+</body>
+</html>
