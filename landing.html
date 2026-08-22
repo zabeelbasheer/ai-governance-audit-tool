@@ -1,0 +1,131 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Zeta Health AI</title>
+<style>
+*, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+:root {
+  --midnight:  #0f1e2d;
+  --navy:      #1a3347;
+  --gold:      #e8a020;
+  --amber:     #b8760a;
+  --parchment: #f7f4ee;
+  --sky:       #8fa8bf;
+  --ocean:     #2a5070;
+  --border:    #d8d4cc;
+  --white:     #ffffff;
+}
+
+body {
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  background: var(--parchment);
+  color: var(--midnight);
+}
+
+.wrap { max-width: 880px; margin: 0 auto; padding: 48px 24px 80px; }
+
+.brand { display: flex; align-items: center; gap: 14px; margin-bottom: 40px; }
+.eyebrow { font-size: 10px; color: var(--amber); letter-spacing: 2.5px; font-weight: 700; }
+.wordmark { font-size: 26px; font-weight: 700; color: var(--midnight); font-family: Georgia, serif; }
+.tagline { font-size: 13px; color: var(--ocean); margin-top: 2px; }
+
+.about-card {
+  background: var(--white);
+  border-radius: 12px;
+  padding: 28px 32px;
+  margin-bottom: 32px;
+}
+.about-name { font-size: 20px; font-weight: 700; color: var(--midnight); font-family: Georgia, serif; }
+.about-role { font-size: 13px; color: var(--ocean); margin-top: 4px; }
+.about-body { font-size: 14px; line-height: 1.7; color: var(--midnight); margin-top: 16px; }
+.about-links { margin-top: 18px; display: flex; gap: 16px; }
+.about-links a { font-size: 12px; color: var(--amber); text-decoration: none; font-weight: 700; }
+.about-links a:hover { color: var(--gold); }
+
+.section-label { font-size: 11px; color: var(--sky); letter-spacing: 1.5px; text-transform: uppercase; margin-bottom: 14px; }
+
+.projects { display: grid; grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); gap: 16px; }
+
+.project-card {
+  background: var(--white);
+  border-radius: 12px;
+  padding: 22px 24px;
+  text-decoration: none;
+  color: inherit;
+  display: block;
+  border: 1px solid var(--border);
+}
+.project-card:hover { border-color: var(--gold); }
+
+.project-status {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.5px;
+  text-transform: uppercase;
+  color: #27ae60;
+  margin-bottom: 10px;
+}
+.project-status::before { content: ""; width: 6px; height: 6px; border-radius: 50%; background: #27ae60; }
+
+.project-title { font-size: 16px; font-weight: 700; color: var(--midnight); }
+.project-desc { font-size: 13px; color: var(--ocean); margin-top: 6px; line-height: 1.5; }
+.project-stack { font-size: 11px; color: var(--sky); margin-top: 12px; }
+</style>
+</head>
+<body>
+<div class="wrap">
+
+  <div class="brand">
+    <svg width="46" height="46" viewBox="0 0 22 22">
+      <circle cx="11" cy="11" r="11" fill="#1a3347"/>
+      <line x1="6" y1="7" x2="16" y2="7" stroke="#e8a020" stroke-width="1.6" stroke-linecap="round"/>
+      <path d="M14.5 7 Q16 11 6 15" fill="none" stroke="#e8a020" stroke-width="1.6" stroke-linecap="round"/>
+      <line x1="6" y1="15" x2="16" y2="15" stroke="#e8a020" stroke-width="1.6" stroke-linecap="round"/>
+    </svg>
+    <div>
+      <div class="eyebrow">ZETA HEALTH AI</div>
+      <div class="wordmark">Zeta Health AI</div>
+      <div class="tagline">Clinical operations, intelligently governed.</div>
+    </div>
+  </div>
+
+  <div class="about-card">
+    <div class="about-name">Zabeel M. Basheer</div>
+    <div class="about-role">VP, Business Excellence &amp; India Site Lead, Shearwater Health</div>
+    <div class="about-body">
+      20+ years across healthcare, BFS, and HR shared services. Built Shearwater's India GCC from 18 to 250+ headcount in 13 months. $20M+ cumulative value delivered through Lean Six Sigma-led transformation programs. Current focus: applied AI in healthcare operations, clinical intelligence, workforce management, and enterprise AI governance.
+    </div>
+    <div class="about-links">
+      <a href="https://github.com/zabeelbasheer" target="_blank" rel="noopener">GitHub</a>
+      <a href="https://linkedin.com/in/zabeelbasheer" target="_blank" rel="noopener">LinkedIn</a>
+    </div>
+  </div>
+
+  <div class="section-label">Live projects</div>
+  <div class="projects">
+
+    <a class="project-card" href="https://zeta-policy-assistant.onrender.com" target="_blank" rel="noopener">
+      <div class="project-status">Live</div>
+      <div class="project-title">HR Policy RAG Chatbot</div>
+      <div class="project-desc">Retrieval-augmented HR policy assistant with source-cited answers and a sensitivity-aware guard layer.</div>
+      <div class="project-stack">FastAPI · Groq · FAISS</div>
+    </a>
+
+    <a class="project-card" href="/governance-audit">
+      <div class="project-status">Live</div>
+      <div class="project-title">AI Governance Audit Tool</div>
+      <div class="project-desc">NIST AI RMF, HIPAA, and HITRUST risk scoring with vendor-aware baselines and remediation guidance.</div>
+      <div class="project-stack">FastAPI · Groq · SQLite</div>
+    </a>
+
+  </div>
+
+</div>
+</body>
+</html>
