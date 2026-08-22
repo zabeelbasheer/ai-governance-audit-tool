@@ -159,11 +159,18 @@ def start_audit(body: NewAuditBody, request: Request):
 
     use_case = body.use_case.strip()
     title = body.title.strip() or (use_case[:60] + ("…" if len(use_case) > 60 else ""))
+
+    try:
+        opening_q = get_opening_question(use_case, vendor_key)
+    except Exception as e:
+        raise HTTPException(
+            status_code=502,
+            detail=f"Couldn't reach the intake model, nothing was saved. Try again. ({e})",
+        )
+
     session_id = create_audit_session(user["id"], title, use_case)
     if vendor_display:
         update_session_vendor(session_id, vendor_display)
-
-    opening_q = get_opening_question(use_case, vendor_key)
     save_intake_message(session_id, "assistant", opening_q)
 
     return {
@@ -193,10 +200,22 @@ def intake_answer(session_id: int, body: IntakeAnswerBody, request: Request):
     history = build_history_for_llm(get_intake_messages(session_id))
     vendor_key = _vendor_key_for_session(session)
 
-    content, complete = get_next_question(history, vendor_key)
+    try:
+        content, complete = get_next_question(history, vendor_key)
+    except Exception as e:
+        raise HTTPException(
+            status_code=502,
+            detail=f"Couldn't reach the intake model. Your answer was saved, try sending again. ({e})",
+        )
 
     if complete:
-        enriched = enrich_use_case(session["use_case_raw"], history, vendor_key)
+        try:
+            enriched = enrich_use_case(session["use_case_raw"], history, vendor_key)
+        except Exception as e:
+            raise HTTPException(
+                status_code=502,
+                detail=f"Intake finished but the summary step failed. Try again. ({e})",
+            )
         update_session_enriched(session_id, enriched)
         return {"complete": True, "summary": content}
 
