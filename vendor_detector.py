@@ -45,6 +45,8 @@ def detect_vendor_llm(use_case: str) -> dict:
             ],
             temperature=0.0,
             max_tokens=100,
+            response_format={"type": "json_object"},
+            reasoning_effort="low",
         )
         raw = response.choices[0].message.content.strip()
         if raw.startswith("```"):

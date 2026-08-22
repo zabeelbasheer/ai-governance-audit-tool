@@ -135,6 +135,7 @@ class NewAuditBody(BaseModel):
     title: str = ""
     use_case: str
     vendor_key: str | None = None  # None = auto-detect
+    skip_intake: bool = False
 
 
 @app.post("/api/audits")
@@ -159,6 +160,20 @@ def start_audit(body: NewAuditBody, request: Request):
 
     use_case = body.use_case.strip()
     title = body.title.strip() or (use_case[:60] + ("…" if len(use_case) > 60 else ""))
+
+    if body.skip_intake:
+        # Preliminary audit: score the raw description as-is, no clarifying questions.
+        # Scores from this path are a rough pass, not the full picture, the intake
+        # conversation exists specifically to close gaps a short description leaves open.
+        session_id = create_audit_session(user["id"], title, use_case)
+        if vendor_display:
+            update_session_vendor(session_id, vendor_display)
+        return {
+            "session_id": session_id,
+            "vendor_key": vendor_key,
+            "vendor_display": vendor_display,
+            "skip_intake": True,
+        }
 
     try:
         opening_q = get_opening_question(use_case, vendor_key)

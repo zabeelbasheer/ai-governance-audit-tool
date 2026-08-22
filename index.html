@@ -373,6 +373,8 @@ textarea.field-input { resize: vertical; min-height: 90px; font-family: inherit;
       <div class="field-hint">The more specific this is, the fewer intake questions you'll need to answer.</div>
 
       <button class="btn-primary" id="start-audit-btn">Start audit</button>
+      <button class="btn-ghost" id="skip-intake-btn" style="margin-top:8px;">Skip questions, run a preliminary score</button>
+      <div class="field-hint" style="margin-top:8px;">Preliminary scores are a rough pass on the description alone. The intake questions exist to close the gaps a short description leaves, worth doing before treating a score as final.</div>
       <div class="login-error hidden" id="audit-start-error"></div>
     </div>
 
@@ -605,7 +607,7 @@ function addChatBubble(role, text) {
   thread.scrollTop = thread.scrollHeight;
 }
 
-document.getElementById('start-audit-btn').addEventListener('click', async () => {
+async function submitNewAudit(skipIntake) {
   const errEl = document.getElementById('audit-start-error');
   errEl.classList.add('hidden');
   const useCase = document.getElementById('audit-usecase').value.trim();
@@ -620,9 +622,14 @@ document.getElementById('start-audit-btn').addEventListener('click', async () =>
   try {
     const data = await api('api/audits', {
       method: 'POST',
-      body: JSON.stringify({ title, use_case: useCase, vendor_key: vendorKey }),
+      body: JSON.stringify({ title, use_case: useCase, vendor_key: vendorKey, skip_intake: skipIntake }),
     });
     currentSessionId = data.session_id;
+
+    if (data.skip_intake) {
+      startEvaluation();
+      return;
+    }
 
     document.getElementById('chat-thread').innerHTML = '';
     const tagEl = document.getElementById('intake-vendor-tag');
@@ -636,7 +643,10 @@ document.getElementById('start-audit-btn').addEventListener('click', async () =>
     errEl.textContent = err.message;
     errEl.classList.remove('hidden');
   }
-});
+}
+
+document.getElementById('start-audit-btn').addEventListener('click', () => submitNewAudit(false));
+document.getElementById('skip-intake-btn').addEventListener('click', () => submitNewAudit(true));
 
 async function sendIntakeAnswer() {
   const input = document.getElementById('intake-answer');

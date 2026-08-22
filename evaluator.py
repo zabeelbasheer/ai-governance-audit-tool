@@ -84,6 +84,8 @@ def evaluate_criterion(client: Groq, use_case: str, criterion: dict,
             ],
             temperature=0.1,
             max_tokens=300,
+            response_format={"type": "json_object"},
+            reasoning_effort="low",
         )
         raw = response.choices[0].message.content.strip()
         if raw.startswith("```"):

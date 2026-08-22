@@ -130,6 +130,7 @@ def get_opening_question(use_case: str, vendor_key: str = None) -> str:
         ],
         temperature=0.3,
         max_tokens=200,
+        reasoning_effort="low",
     )
     return response.choices[0].message.content.strip()
 
@@ -148,6 +149,7 @@ def get_next_question(conversation_history: list,
         messages=[{"role": "system", "content": system_prompt}] + conversation_history,
         temperature=0.3,
         max_tokens=400,
+        reasoning_effort="low",
     )
     content = response.choices[0].message.content.strip()
 
@@ -205,6 +207,7 @@ def enrich_use_case(use_case_raw: str, conversation_history: list,
         messages=messages,
         temperature=0.2,
         max_tokens=800,
+        reasoning_effort="low",
     )
     return response.choices[0].message.content.strip()
 
