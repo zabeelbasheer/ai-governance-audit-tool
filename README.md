@@ -24,7 +24,7 @@ Compounding this: most deployments use third-party AI platforms (Microsoft Copil
 
 Describe an AI use case in plain English. The tool detects the vendor or platform involved, pre-loads vendor-confirmed governance controls as baselines, and runs a 24-criterion evaluation — asking the LLM to adjust scores based on your specific deployment context rather than evaluating from zero.
 
-After scoring, a conversational mentor works through each red and amber finding, asks diagnostic questions, and generates a specific action item with a suggested owner and due date. All actions compile into a persistent checklist tracked across sessions.
+After scoring, a conversational mentor works through each red and amber finding, asks a diagnostic question, and generates a specific action item with a suggested owner and due date. Every action item lands on a cross-audit checklist, editable inline, aggregated across every audit rather than buried inside each one. The full audit, description, intake conversation, scores, rationale, and action items, exports as a branded PDF report. Every audit is soft-deletable with a 30-day recovery window rather than a silent, permanent removal, since a compliance tool shouldn't make records disappear any faster than it has to.
 
 ---
 
@@ -150,22 +150,27 @@ Optional: skip straight to a preliminary score on the raw description
 24-Criterion Evaluator (Groq LLM)
 Vendor baselines inform scoring
 LLM adjusts based on deployment-specific context
+Runs in parallel across a bounded thread pool, retries on rate limits
           │
           ▼
 Results: Overall % · Maturity band · full criterion breakdown by function
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ live demo ends here
+Audit trail: original description, full intake conversation, audited scope
           │
           ▼
-Mentor Agent (Groq LLM)                              ← in progress
-Per red/amber criterion: diagnostic question → tailored action
+Mentor Agent (Groq LLM)
+Per red/amber criterion: diagnostic question → tailored action item
           │
           ▼
-Action Checklist (SQLite)                              ← in progress
-Owner · due date · status tracking · CSV export
+Action Checklist (SQLite)
+Owner · due date · status, editable inline, aggregated across every audit
+          │
+          ▼
+PDF Report Export
+Branded audit report: scores, rationale, remediation, action items
           │
           ▼
 Audit History Dashboard
-Role-based visibility · search by user / title / score / vendor
+Role-based visibility · search · soft delete with 30-day recovery
 ```
 
 ---
@@ -193,6 +198,7 @@ Authentication is bcrypt-hashed with environment variable passwords. Designed as
 | Database | SQLite (PostgreSQL-ready) |
 | Authentication | bcrypt — Azure AD SSO drop-in ready |
 | Vendor KB | Static JSON-style knowledge base (vendor_kb.py) |
+| PDF reports | reportlab |
 | Language | Python 3.11 |
 
 ---
@@ -242,11 +248,11 @@ Contact the author via [LinkedIn](https://linkedin.com/in/zabeelbasheer).
 ## Roadmap
 
 - [ ] ISO/IEC 42001:2023 criteria layer (expanding to 32 criteria)
-- [x] FastAPI + vanilla JS rebuild for pixel-perfect UI and REST API — dashboard, auth, and the full audit-and-score flow are live; mentor agent and action checklist still in progress
+- [x] FastAPI + vanilla JS rebuild for pixel-perfect UI and REST API
+- [x] Mentor agent, action checklist, and PDF audit report with branded letterhead
 - [ ] Azure AD SSO integration (MSAL drop-in)
 - [ ] PostgreSQL migration for multi-tenant enterprise deployment
 - [ ] EU AI Act Article 9 and 13 criteria
-- [ ] PDF audit report with organisational letterhead
 - [ ] Additional vendors: Google Vertex AI, Oracle Health, Epic MyChart
 - [ ] Automated re-audit scheduling
 
