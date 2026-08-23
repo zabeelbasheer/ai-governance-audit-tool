@@ -8,6 +8,8 @@ deployment-specific context.
 
 import json
 import os
+from concurrent.futures import ThreadPoolExecutor, as_completed
+from threading import Lock
 from groq import Groq
 from criteria import CRITERIA, MATURITY_BANDS
 from dotenv import load_dotenv
@@ -123,8 +125,6 @@ def run_evaluation(use_case: str, progress_callback=None,
     """
     from vendor_kb import VENDOR_KB, get_baseline_scores
 
-    client   = get_client()
-    results  = []
     baselines = {}
     vendor_name = None
 
@@ -135,20 +135,32 @@ def run_evaluation(use_case: str, progress_callback=None,
     else:
         vendor_cov = {}
 
-    for i, criterion in enumerate(CRITERIA):
-        cid             = criterion["id"]
-        vendor_baseline = baselines.get(cid)
-        vendor_note     = vendor_cov.get(cid, {}).get("note")
+    results_by_id = {}
+    completed = 0
+    progress_lock = Lock()
 
-        result = evaluate_criterion(
-            client, use_case, criterion,
-            vendor_baseline=vendor_baseline,
-            vendor_note=vendor_note,
+    def _run_one(criterion):
+        cid = criterion["id"]
+        # Each task gets its own client rather than sharing one across threads.
+        return criterion, evaluate_criterion(
+            get_client(), use_case, criterion,
+            vendor_baseline=baselines.get(cid),
+            vendor_note=vendor_cov.get(cid, {}).get("note"),
             vendor_name=vendor_name,
         )
-        results.append(result)
-        if progress_callback:
-            progress_callback(i + 1, len(CRITERIA), criterion["name"])
+
+    with ThreadPoolExecutor(max_workers=6) as pool:
+        futures = [pool.submit(_run_one, c) for c in CRITERIA]
+        for future in as_completed(futures):
+            criterion, result = future.result()
+            results_by_id[criterion["id"]] = result
+            with progress_lock:
+                completed += 1
+                if progress_callback:
+                    progress_callback(completed, len(CRITERIA), criterion["name"])
+
+    # Reassemble in the original criteria order, not completion order.
+    results = [results_by_id[c["id"]] for c in CRITERIA]
 
     total_weighted = sum(r["weighted_score"] for r in results)
     max_weighted   = sum(c["weight"] * 5 for c in CRITERIA)
