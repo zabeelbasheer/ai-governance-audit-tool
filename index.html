@@ -325,12 +325,12 @@ textarea.field-input { resize: vertical; min-height: 90px; font-family: inherit;
 
     <div class="toolbar">
       <input class="search-input" id="search-input" placeholder="Search by user, title, score, or vendor…">
+      <button class="btn-ghost" id="view-trash-btn" style="white-space:nowrap;">Recently deleted</button>
       <button class="btn-new" id="new-audit-btn">+ New audit</button>
     </div>
 
-    <div class="phase-note">Phase 2 build: new audit intake and scoring are live. Mentoring and checklist open in later phases.</div>
-
     <div id="sessions-table-wrap"></div>
+    <div id="trash-table-wrap" class="hidden"></div>
   </div>
 </div>
 
@@ -479,6 +479,9 @@ function renderSessions(data) {
     const score = s.overall_pct != null ? `${s.overall_pct}%` : '—';
     const dateStr = (s.created_at || '').slice(0, 10);
 
+    const canDelete = currentUser && (currentUser.role === 'admin' || s.user_id === currentUser.id);
+    const deleteBtn = canDelete ? `<button class="btn-open" data-delete-id="${s.id}" style="margin-left:6px; color:#c0392b; border-color:#c0392b;">Delete</button>` : '';
+
     return `<tr>
       <td>
         <div class="cell-title">${escapeHtml(s.title)}</div>
@@ -492,7 +495,7 @@ function renderSessions(data) {
       <td>${score}</td>
       <td>${maturity}</td>
       <td><span class="status-dot ${statusClass}">${escapeHtml(statusLabel)}</span></td>
-      <td><button class="btn-open" data-id="${s.id}">Open</button></td>
+      <td><button class="btn-open" data-id="${s.id}">Open</button>${deleteBtn}</td>
     </tr>`;
   }).join('');
 
@@ -503,8 +506,20 @@ function renderSessions(data) {
     <tbody>${rows}</tbody>
   </table>`;
 
-  wrap.querySelectorAll('.btn-open').forEach(btn => {
+  wrap.querySelectorAll('.btn-open[data-id]').forEach(btn => {
     btn.addEventListener('click', () => openExistingAudit(btn.dataset.id));
+  });
+
+  wrap.querySelectorAll('[data-delete-id]').forEach(btn => {
+    btn.addEventListener('click', async () => {
+      if (!confirm('Delete this audit? It moves to Recently Deleted and can be restored within 30 days.')) return;
+      try {
+        await api(`api/audits/${btn.dataset.deleteId}`, { method: 'DELETE' });
+        loadSessions(document.getElementById('search-input').value);
+      } catch (err) {
+        alert(`Couldn't delete: ${err.message}`);
+      }
+    });
   });
 }
 
@@ -513,7 +528,66 @@ async function loadSessions(q = '') {
   renderSessions(data);
 }
 
+let trashVisible = false;
+
+function renderTrash(data) {
+  const wrap = document.getElementById('trash-table-wrap');
+  if (!data.sessions.length) {
+    wrap.innerHTML = '<div class="empty-state">Nothing in Recently Deleted.</div>';
+    return;
+  }
+
+  const rows = data.sessions.map(s => `
+    <tr>
+      <td>
+        <div class="cell-title">${escapeHtml(s.title)}</div>
+        <div class="cell-sub">Deleted ${escapeHtml((s.deleted_at || '').slice(0, 10))} · ${s.days_remaining} day${s.days_remaining === 1 ? '' : 's'} left</div>
+      </td>
+      <td>
+        <div>${escapeHtml(s.display_name || '—')}</div>
+        <div class="cell-sub">${escapeHtml(s.email || '')}</div>
+      </td>
+      <td>${escapeHtml(s.vendor_name || '—')}</td>
+      <td>${s.overall_pct != null ? s.overall_pct + '%' : '—'}</td>
+      <td><button class="btn-open" data-restore-id="${s.id}">Restore</button></td>
+    </tr>
+  `).join('');
+
+  wrap.innerHTML = `<table>
+    <thead><tr><th>Audit title</th><th>Submitted by</th><th>Vendor</th><th>Score</th><th>Action</th></tr></thead>
+    <tbody>${rows}</tbody>
+  </table>`;
+
+  wrap.querySelectorAll('[data-restore-id]').forEach(btn => {
+    btn.addEventListener('click', async () => {
+      try {
+        await api(`api/audits/${btn.dataset.restoreId}/restore`, { method: 'POST' });
+        loadTrash();
+        loadSessions(document.getElementById('search-input').value);
+      } catch (err) {
+        alert(`Couldn't restore: ${err.message}`);
+      }
+    });
+  });
+}
+
+async function loadTrash() {
+  const data = await api('api/audits/trash');
+  renderTrash(data);
+}
+
+document.getElementById('view-trash-btn').addEventListener('click', () => {
+  trashVisible = !trashVisible;
+  document.getElementById('trash-table-wrap').classList.toggle('hidden', !trashVisible);
+  document.getElementById('sessions-table-wrap').classList.toggle('hidden', trashVisible);
+  document.getElementById('view-trash-btn').textContent = trashVisible ? 'Back to audits' : 'Recently deleted';
+  if (trashVisible) loadTrash();
+});
+
+let currentUser = null;
+
 function showDashboard(user, roleLabel) {
+  currentUser = user;
   loginView.classList.add('hidden');
   dashboardView.classList.remove('hidden');
   document.getElementById('user-name').textContent = user.display_name;

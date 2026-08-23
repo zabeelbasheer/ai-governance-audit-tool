@@ -25,6 +25,7 @@ from db import (
     update_session_scores, update_session_status, get_session, save_audit_results,
     get_audit_results, save_intake_message, get_intake_messages,
     save_checklist_items, get_checklist,
+    soft_delete_session, restore_session, get_deleted_sessions,
 )
 from auth import verify_credentials, ROLE_LABELS
 from vendor_detector import detect_vendor_llm, get_all_vendor_options
@@ -107,6 +108,59 @@ def sessions(request: Request, q: str = ""):
             or ql in (r.get("maturity_label") or "").lower()
             or ql in (r.get("vendor_name") or "").lower()
         ]
+
+    return {"sessions": rows, "can_view_all": can_view_all(user["role"])}
+
+
+def _can_delete(user: dict, session: dict) -> bool:
+    """Delete/restore is creator-or-admin only. Auditor and DPO can view
+    everything but that's not the same as being trusted to make things
+    disappear from the record, even temporarily."""
+    return user["role"] == "admin" or session["user_id"] == user["id"]
+
+
+@app.delete("/api/audits/{session_id}")
+def delete_audit(session_id: int, request: Request):
+    user = request.session.get("user")
+    if not user:
+        raise HTTPException(status_code=401, detail="Not signed in.")
+    session = get_session(session_id)
+    if not session:
+        raise HTTPException(status_code=404, detail="Audit session not found.")
+    if not _can_delete(user, session):
+        raise HTTPException(status_code=403, detail="Only the audit's creator or an admin can delete it.")
+    soft_delete_session(session_id, user["id"])
+    return {"ok": True, "deleted_at": datetime.now().isoformat()}
+
+
+@app.post("/api/audits/{session_id}/restore")
+def restore_audit(session_id: int, request: Request):
+    user = request.session.get("user")
+    if not user:
+        raise HTTPException(status_code=401, detail="Not signed in.")
+    session = get_session(session_id)
+    if not session:
+        raise HTTPException(status_code=404, detail="Audit session not found.")
+    if not _can_delete(user, session):
+        raise HTTPException(status_code=403, detail="Only the audit's creator or an admin can restore it.")
+    if not session.get("deleted_at"):
+        raise HTTPException(status_code=400, detail="This audit isn't deleted.")
+    restore_session(session_id)
+    return {"ok": True}
+
+
+@app.get("/api/audits/trash")
+def trash(request: Request):
+    user = request.session.get("user")
+    if not user:
+        raise HTTPException(status_code=401, detail="Not signed in.")
+
+    rows = get_deleted_sessions() if can_view_all(user["role"]) else get_deleted_sessions(user["id"])
+
+    for r in rows:
+        deleted = datetime.fromisoformat(r["deleted_at"])
+        days_left = 30 - (datetime.now() - deleted).days
+        r["days_remaining"] = max(0, days_left)
 
     return {"sessions": rows, "can_view_all": can_view_all(user["role"])}
 

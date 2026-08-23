@@ -98,6 +98,21 @@ def init_db():
             conn.execute(s)
     conn.commit()
 
+    # Migration: soft-delete columns, added after the table already existed in
+    # production, so this can't rely on CREATE TABLE. Safe to run every startup.
+    existing_cols = {row["name"] for row in conn.execute("PRAGMA table_info(audit_sessions)").fetchall()}
+    if "deleted_at" not in existing_cols:
+        conn.execute("ALTER TABLE audit_sessions ADD COLUMN deleted_at TEXT")
+    if "deleted_by" not in existing_cols:
+        conn.execute("ALTER TABLE audit_sessions ADD COLUMN deleted_by INTEGER")
+    conn.commit()
+
+    # Permanently purge anything soft-deleted more than 30 days ago.
+    conn.execute(
+        "DELETE FROM audit_sessions WHERE deleted_at IS NOT NULL AND deleted_at < datetime('now', '-30 days')"
+    )
+    conn.commit()
+
     # Seed demo users if not present
     seed_users = [
         ("admin@shearwater.com",   "System Admin",            "admin",   os.getenv("ADMIN_PASSWORD",   "changeme_admin")),
@@ -205,7 +220,7 @@ def get_sessions_for_user(user_id: int):
     rows = conn.execute(
         """SELECT s.*, u.display_name, u.email
            FROM audit_sessions s JOIN users u ON s.user_id = u.id
-           WHERE s.user_id = ?
+           WHERE s.user_id = ? AND s.deleted_at IS NULL
            ORDER BY s.updated_at DESC""",
         (user_id,)
     ).fetchall()
@@ -219,8 +234,46 @@ def get_all_sessions():
     rows = conn.execute(
         """SELECT s.*, u.display_name, u.email
            FROM audit_sessions s JOIN users u ON s.user_id = u.id
+           WHERE s.deleted_at IS NULL
            ORDER BY s.updated_at DESC"""
     ).fetchall()
+    conn.close()
+    return [dict(r) for r in rows]
+
+
+def soft_delete_session(session_id: int, deleted_by_user_id: int):
+    conn = get_conn()
+    conn.execute(
+        "UPDATE audit_sessions SET deleted_at = ?, deleted_by = ?, updated_at = ? WHERE id = ?",
+        (datetime.now().isoformat(), deleted_by_user_id, datetime.now().isoformat(), session_id)
+    )
+    conn.commit()
+    conn.close()
+
+
+def restore_session(session_id: int):
+    conn = get_conn()
+    conn.execute(
+        "UPDATE audit_sessions SET deleted_at = NULL, deleted_by = NULL, updated_at = ? WHERE id = ?",
+        (datetime.now().isoformat(), session_id)
+    )
+    conn.commit()
+    conn.close()
+
+
+def get_deleted_sessions(user_id: int = None):
+    """Soft-deleted sessions still within the 30-day window.
+    Pass user_id to scope to one user, omit for all (admin/auditor/DPO)."""
+    conn = get_conn()
+    query = """SELECT s.*, u.display_name, u.email
+               FROM audit_sessions s JOIN users u ON s.user_id = u.id
+               WHERE s.deleted_at IS NOT NULL"""
+    params = ()
+    if user_id is not None:
+        query += " AND s.user_id = ?"
+        params = (user_id,)
+    query += " ORDER BY s.deleted_at DESC"
+    rows = conn.execute(query, params).fetchall()
     conn.close()
     return [dict(r) for r in rows]
 
