@@ -8,9 +8,10 @@ deployment-specific context.
 
 import json
 import os
+import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from threading import Lock
-from groq import Groq
+from groq import Groq, RateLimitError
 from criteria import CRITERIA, MATURITY_BANDS
 from dotenv import load_dotenv
 
@@ -75,36 +76,54 @@ def evaluate_criterion(client: Groq, use_case: str, criterion: dict,
                        vendor_baseline: int = None,
                        vendor_note: str = None,
                        vendor_name: str = None) -> dict:
-    try:
-        response = client.chat.completions.create(
-            model=os.getenv("MODEL_NAME", "openai/gpt-oss-120b"),
-            messages=[
-                {"role": "system", "content": SYSTEM_PROMPT},
-                {"role": "user",   "content": build_user_prompt(
-                    use_case, criterion, vendor_baseline, vendor_note, vendor_name
-                )},
-            ],
-            temperature=0.1,
-            max_tokens=300,
-            response_format={"type": "json_object"},
-            reasoning_effort="low",
-        )
-        raw = response.choices[0].message.content.strip()
-        if raw.startswith("```"):
-            parts = raw.split("```")
-            raw = parts[1] if len(parts) > 1 else raw
-            if raw.startswith("json"):
-                raw = raw[4:]
-        parsed = json.loads(raw.strip())
-        score         = max(1, min(5, int(parsed["score"])))
-        critical_flag = bool(parsed.get("critical_flag", False))
-        rationale     = str(parsed.get("rationale", ""))
-        remediation   = str(parsed.get("remediation", ""))
-    except Exception as e:
-        score         = 1
-        critical_flag = False
-        rationale     = f"Evaluation failed ({e}) — defaulting to lowest score."
-        remediation   = "Re-run evaluation or assess this criterion manually."
+    score = critical_flag = rationale = remediation = None
+    max_retries = 4
+
+    for attempt in range(max_retries):
+        try:
+            response = client.chat.completions.create(
+                model=os.getenv("MODEL_NAME", "openai/gpt-oss-120b"),
+                messages=[
+                    {"role": "system", "content": SYSTEM_PROMPT},
+                    {"role": "user",   "content": build_user_prompt(
+                        use_case, criterion, vendor_baseline, vendor_note, vendor_name
+                    )},
+                ],
+                temperature=0.1,
+                max_tokens=300,
+                response_format={"type": "json_object"},
+                reasoning_effort="low",
+            )
+            raw = response.choices[0].message.content.strip()
+            if raw.startswith("```"):
+                parts = raw.split("```")
+                raw = parts[1] if len(parts) > 1 else raw
+                if raw.startswith("json"):
+                    raw = raw[4:]
+            parsed = json.loads(raw.strip())
+            score         = max(1, min(5, int(parsed["score"])))
+            critical_flag = bool(parsed.get("critical_flag", False))
+            rationale     = str(parsed.get("rationale", ""))
+            remediation   = str(parsed.get("remediation", ""))
+            break
+
+        except RateLimitError as e:
+            if attempt == max_retries - 1:
+                score         = 1
+                critical_flag = False
+                rationale     = f"Evaluation failed after {max_retries} attempts, still rate limited ({e}) — defaulting to lowest score."
+                remediation   = "Re-run evaluation or assess this criterion manually."
+                break
+            retry_after = e.response.headers.get("retry-after")
+            wait = float(retry_after) + 1 if retry_after else 12
+            time.sleep(wait)
+
+        except Exception as e:
+            score         = 1
+            critical_flag = False
+            rationale     = f"Evaluation failed ({e}) — defaulting to lowest score."
+            remediation   = "Re-run evaluation or assess this criterion manually."
+            break
 
     return {
         **criterion,
@@ -149,7 +168,7 @@ def run_evaluation(use_case: str, progress_callback=None,
             vendor_name=vendor_name,
         )
 
-    with ThreadPoolExecutor(max_workers=6) as pool:
+    with ThreadPoolExecutor(max_workers=3) as pool:
         futures = [pool.submit(_run_one, c) for c in CRITERIA]
         for future in as_completed(futures):
             criterion, result = future.result()
