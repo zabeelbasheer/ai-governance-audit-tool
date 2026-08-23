@@ -1,0 +1,119 @@
+From 5c4cb080be9122fbb931c011ba5815f52b7bf608 Mon Sep 17 00:00:00 2001
+From: zabeelbasheer <53309631+zabeelbasheer@users.noreply.github.com>
+Date: Sun, 23 Aug 2026 14:28:33 +0000
+Subject: [PATCH] docs: update README to reflect the live FastAPI deployment
+
+Live demo link pointed at the retired Streamlit URL. Badges, tech
+stack, and setup instructions still described Streamlit and the dead
+Groq model. The workflow diagram presented the mentor agent and
+action checklist as live features, they're phase 3/4, not built yet,
+marked accordingly instead of overclaiming.
+---
+ README.md | 38 ++++++++++++++++++++------------------
+ 1 file changed, 20 insertions(+), 18 deletions(-)
+
+diff --git a/README.md b/README.md
+index e709a9c..0fb6f8c 100644
+--- a/README.md
++++ b/README.md
+@@ -2,11 +2,11 @@
+ 
+ > An LLM-powered AI governance auditor and mentor for healthcare deployments. Evaluates any AI use case against 24 criteria drawn from NIST AI RMF, HIPAA, and HITRUST CSF — with vendor-aware scoring for Microsoft, AWS, and Salesforce — then guides teams to remediation through a conversational mentor and tracked action checklist.
+ 
+-**🚀 Live Demo:** https://ai-governance-audit.streamlit.app
++**🚀 Live Demo:** https://zeta-governance-audit.onrender.com/governance-audit
+ 
+ ![Python](https://img.shields.io/badge/Python-3.11-blue)
+-![Streamlit](https://img.shields.io/badge/Streamlit-1.60-red)
+-![Groq](https://img.shields.io/badge/Groq-llama--3.3--70b-orange)
++![FastAPI](https://img.shields.io/badge/FastAPI-0.141-green)
++![Groq](https://img.shields.io/badge/Groq-gpt--oss--120b-orange)
+ ![SQLite](https://img.shields.io/badge/DB-SQLite%20→%20PostgreSQL-lightgrey)
+ ![License](https://img.shields.io/badge/license-MIT-lightgrey)
+ 
+@@ -144,6 +144,7 @@ Pre-loads baseline scores for strongly covered criteria
+ Intake Agent (Groq LLM)
+ 5–7 clarifying questions — skips vendor-confirmed areas
+ Focuses on customer responsibility gaps
++Optional: skip straight to a preliminary score on the raw description
+           │
+           ▼
+ 24-Criterion Evaluator (Groq LLM)
+@@ -151,15 +152,15 @@ Vendor baselines inform scoring
+ LLM adjusts based on deployment-specific context
+           │
+           ▼
+-Results: Overall % · Maturity band · Radar chart
+-Traffic-light risk matrix with vendor baseline badges
++Results: Overall % · Maturity band · full criterion breakdown by function
++━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ live demo ends here
+           │
+           ▼
+-Mentor Agent (Groq LLM)
++Mentor Agent (Groq LLM)                              ← in progress
+ Per red/amber criterion: diagnostic question → tailored action
+           │
+           ▼
+-Action Checklist (SQLite)
++Action Checklist (SQLite)                              ← in progress
+ Owner · due date · status tracking · CSV export
+           │
+           ▼
+@@ -186,11 +187,11 @@ Authentication is bcrypt-hashed with environment variable passwords. Designed as
+ 
+ | Component | Technology |
+ |-----------|-----------|
+-| LLM inference | Groq API — llama-3.3-70b-versatile |
+-| Frontend | Streamlit 1.60 |
++| Backend | FastAPI + Uvicorn |
++| LLM inference | Groq API — openai/gpt-oss-120b |
++| Frontend | Pure HTML + CSS + Vanilla JS (single file) |
+ | Database | SQLite (PostgreSQL-ready) |
+ | Authentication | bcrypt — Azure AD SSO drop-in ready |
+-| Charts | Plotly — radar chart across 6 governance functions |
+ | Vendor KB | Static JSON-style knowledge base (vendor_kb.py) |
+ | Language | Python 3.11 |
+ 
+@@ -205,17 +206,18 @@ uv python pin 3.11
+ uv sync
+ cp .env.example .env
+ mkdir -p data
+-uv run streamlit run app.py
++uv run uvicorn main:app --reload
+ ```
+ 
+ ### `.env`
+ ```
+ GROQ_API_KEY=your_groq_key_here
+-MODEL_NAME=llama-3.3-70b-versatile
+-ADMIN_PASSWORD=YourAdminPassword
+-AUDITOR_PASSWORD=YourAuditorPassword
+-DPO_PASSWORD=YourDpoPassword
+-USER_PASSWORD=YourUserPassword
++MODEL_NAME=openai/gpt-oss-120b
++SESSION_SECRET=change_this_to_a_random_string
++ADMIN_PASSWORD=your_admin_password
++AUDITOR_PASSWORD=your_auditor_password
++DPO_PASSWORD=your_dpo_password
++USER_PASSWORD=your_user_password
+ ```
+ 
+ ### Demo access
+@@ -240,7 +242,7 @@ Contact the author via [LinkedIn](https://linkedin.com/in/zabeelbasheer).
+ ## Roadmap
+ 
+ - [ ] ISO/IEC 42001:2023 criteria layer (expanding to 32 criteria)
+-- [ ] FastAPI + vanilla JS rebuild for pixel-perfect UI and REST API
++- [x] FastAPI + vanilla JS rebuild for pixel-perfect UI and REST API — dashboard, auth, and the full audit-and-score flow are live; mentor agent and action checklist still in progress
+ - [ ] Azure AD SSO integration (MSAL drop-in)
+ - [ ] PostgreSQL migration for multi-tenant enterprise deployment
+ - [ ] EU AI Act Article 9 and 13 criteria
+@@ -260,4 +262,4 @@ Built by [Zabeel M. Basheer](https://linkedin.com/in/zabeelbasheer) — VP Busin
+ 
+ ## Tags
+ 
+-`healthcare-ai` `ai-governance` `nist-ai-rmf` `hipaa` `hitrust` `streamlit` `groq` `enterprise-ai` `aigp` `responsible-ai` `python` `healthcare-bpo` `vendor-knowledge-base` `microsoft-copilot` `aws-bedrock` `salesforce-health-cloud`
++`healthcare-ai` `ai-governance` `nist-ai-rmf` `hipaa` `hitrust` `fastapi` `groq` `enterprise-ai` `aigp` `responsible-ai` `python` `healthcare-bpo` `vendor-knowledge-base` `microsoft-copilot` `aws-bedrock` `salesforce-health-cloud`
+-- 
+2.43.0
+

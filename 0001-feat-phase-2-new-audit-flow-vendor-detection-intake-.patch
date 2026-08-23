@@ -1,0 +1,625 @@
+From 8c2df3a657452982144cace82c88fe97dc2d54b0 Mon Sep 17 00:00:00 2001
+From: zabeelbasheer <53309631+zabeelbasheer@users.noreply.github.com>
+Date: Sat, 22 Aug 2026 16:27:56 +0000
+Subject: [PATCH 1/3] feat: phase 2, new audit flow (vendor detection, intake
+ chat, 24-criterion evaluation, results view)
+
+Also fixes vendor_detector's fallback: Groq client construction was
+outside the try block, so any client-init failure skipped the
+documented keyword-matching fallback and 500'd instead.
+---
+ governance_audit_app.py | 173 +++++++++++++++++++-
+ index.html              | 347 +++++++++++++++++++++++++++++++++++++++-
+ vendor_detector.py      |   3 +-
+ 3 files changed, 509 insertions(+), 14 deletions(-)
+
+diff --git a/governance_audit_app.py b/governance_audit_app.py
+index 3e5b7b3..377092e 100644
+--- a/governance_audit_app.py
++++ b/governance_audit_app.py
+@@ -1,13 +1,16 @@
+ """
+-main.py — Zeta Health AI · Governance Audit
+-FastAPI + vanilla JS web layer, phase 1 of the Streamlit migration.
++governance_audit_app.py — Zeta Health AI · Governance Audit
++FastAPI + vanilla JS web layer, phases 1 and 2 of the Streamlit migration.
+ 
+-Phase 1 scope: dashboard shell, session-cookie auth, session list, search.
+-Reuses db.py and auth.verify_credentials unchanged. The Streamlit app.py
+-and pages/ directory are left in place until later phases are ported.
++Phase 1: dashboard shell, session-cookie auth, session list, search.
++Phase 2: vendor detection, intake chat, evaluation, results view.
++Reuses db.py, auth.py, vendor_detector.py, intake_agent.py, and
++evaluator.py unchanged. The Streamlit app.py and pages/ directory are
++left in place until phases 3 and 4 are ported.
+ """
+ 
+ import os
++import threading
+ from contextlib import asynccontextmanager
+ 
+ from fastapi import FastAPI, Request, HTTPException
+@@ -15,8 +18,17 @@ from fastapi.responses import FileResponse
+ from pydantic import BaseModel
+ from starlette.middleware.sessions import SessionMiddleware
+ 
+-from db import init_db, get_sessions_for_user, get_all_sessions
++from db import (
++    init_db, get_sessions_for_user, get_all_sessions,
++    create_audit_session, update_session_vendor, update_session_enriched,
++    update_session_scores, get_session, save_audit_results,
++    get_audit_results, save_intake_message, get_intake_messages,
++)
+ from auth import verify_credentials, ROLE_LABELS
++from vendor_detector import detect_vendor_llm, get_all_vendor_options
++from vendor_kb import VENDOR_KB
++from intake_agent import get_opening_question, get_next_question, enrich_use_case, build_history_for_llm
++from evaluator import run_evaluation
+ 
+ 
+ @asynccontextmanager
+@@ -96,6 +108,155 @@ def sessions(request: Request, q: str = ""):
+     return {"sessions": rows, "can_view_all": can_view_all(user["role"])}
+ 
+ 
++# ── Phase 2: new audit flow ──────────────────────────────────────────────────
++
++EVAL_PROGRESS: dict[int, dict] = {}
++
++
++def _vendor_key_for_session(session: dict) -> str | None:
++    """Reverse-lookup vendor_key from the display name stored on the session."""
++    stored = session.get("vendor_name")
++    if not stored:
++        return None
++    for key, v in VENDOR_KB.items():
++        if v["display_name"] == stored:
++            return key
++    return None
++
++
++@app.get("/api/vendors")
++def list_vendors(request: Request):
++    if not request.session.get("user"):
++        raise HTTPException(status_code=401, detail="Not signed in.")
++    return {"vendors": get_all_vendor_options()}
++
++
++class NewAuditBody(BaseModel):
++    title: str = ""
++    use_case: str
++    vendor_key: str | None = None  # None = auto-detect
++
++
++@app.post("/api/audits")
++def start_audit(body: NewAuditBody, request: Request):
++    user = request.session.get("user")
++    if not user:
++        raise HTTPException(status_code=401, detail="Not signed in.")
++    if not body.use_case.strip():
++        raise HTTPException(status_code=400, detail="Describe the AI use case before starting.")
++
++    vendor_key = body.vendor_key
++    vendor_display = None
++    if vendor_key and vendor_key in VENDOR_KB:
++        vendor_display = VENDOR_KB[vendor_key]["display_name"]
++    elif not vendor_key:
++        detection = detect_vendor_llm(body.use_case)
++        if detection.get("detected"):
++            vendor_key = detection.get("vendor_key")
++            vendor_display = detection.get("vendor_display") or (
++                VENDOR_KB[vendor_key]["display_name"] if vendor_key in VENDOR_KB else None
++            )
++
++    use_case = body.use_case.strip()
++    title = body.title.strip() or (use_case[:60] + ("…" if len(use_case) > 60 else ""))
++    session_id = create_audit_session(user["id"], title, use_case)
++    if vendor_display:
++        update_session_vendor(session_id, vendor_display)
++
++    opening_q = get_opening_question(use_case, vendor_key)
++    save_intake_message(session_id, "assistant", opening_q)
++
++    return {
++        "session_id": session_id,
++        "vendor_key": vendor_key,
++        "vendor_display": vendor_display,
++        "question": opening_q,
++    }
++
++
++class IntakeAnswerBody(BaseModel):
++    answer: str
++
++
++@app.post("/api/audits/{session_id}/intake")
++def intake_answer(session_id: int, body: IntakeAnswerBody, request: Request):
++    if not request.session.get("user"):
++        raise HTTPException(status_code=401, detail="Not signed in.")
++
++    session = get_session(session_id)
++    if not session:
++        raise HTTPException(status_code=404, detail="Audit session not found.")
++    if not body.answer.strip():
++        raise HTTPException(status_code=400, detail="Answer can't be empty.")
++
++    save_intake_message(session_id, "user", body.answer.strip())
++    history = build_history_for_llm(get_intake_messages(session_id))
++    vendor_key = _vendor_key_for_session(session)
++
++    content, complete = get_next_question(history, vendor_key)
++
++    if complete:
++        enriched = enrich_use_case(session["use_case_raw"], history, vendor_key)
++        update_session_enriched(session_id, enriched)
++        return {"complete": True, "summary": content}
++
++    save_intake_message(session_id, "assistant", content)
++    return {"complete": False, "question": content}
++
++
++def _run_evaluation_background(session_id: int, use_case: str, vendor_key: str | None):
++    def progress_cb(done, total, name):
++        EVAL_PROGRESS[session_id] = {"done": done, "total": total, "current": name, "complete": False}
++
++    EVAL_PROGRESS[session_id] = {"done": 0, "total": 24, "current": "Starting…", "complete": False}
++    try:
++        result = run_evaluation(use_case, progress_callback=progress_cb, vendor_key=vendor_key)
++        save_audit_results(session_id, result["results"])
++        update_session_scores(
++            session_id, result["overall_pct"], result["maturity_label"],
++            result["maturity_color"], result["maturity_desc"],
++        )
++        EVAL_PROGRESS[session_id] = {"done": 24, "total": 24, "current": "Done", "complete": True}
++    except Exception as e:
++        EVAL_PROGRESS[session_id] = {"done": 0, "total": 24, "current": f"Error: {e}", "complete": True, "error": True}
++
++
++@app.post("/api/audits/{session_id}/evaluate")
++def start_evaluation(session_id: int, request: Request):
++    if not request.session.get("user"):
++        raise HTTPException(status_code=401, detail="Not signed in.")
++
++    session = get_session(session_id)
++    if not session:
++        raise HTTPException(status_code=404, detail="Audit session not found.")
++
++    use_case = session.get("use_case_enriched") or session["use_case_raw"]
++    vendor_key = _vendor_key_for_session(session)
++
++    thread = threading.Thread(
++        target=_run_evaluation_background, args=(session_id, use_case, vendor_key), daemon=True
++    )
++    thread.start()
++    return {"status": "started"}
++
++
++@app.get("/api/audits/{session_id}/evaluate/progress")
++def evaluation_progress(session_id: int, request: Request):
++    if not request.session.get("user"):
++        raise HTTPException(status_code=401, detail="Not signed in.")
++    return EVAL_PROGRESS.get(session_id, {"done": 0, "total": 24, "current": "", "complete": False})
++
++
++@app.get("/api/audits/{session_id}")
++def get_audit(session_id: int, request: Request):
++    if not request.session.get("user"):
++        raise HTTPException(status_code=401, detail="Not signed in.")
++    session = get_session(session_id)
++    if not session:
++        raise HTTPException(status_code=404, detail="Audit session not found.")
++    return {"session": session, "results": get_audit_results(session_id)}
++
++
+ @app.get("/")
+ def index():
+     return FileResponse("index.html")
+diff --git a/index.html b/index.html
+index 9863314..8028fb4 100644
+--- a/index.html
++++ b/index.html
+@@ -216,6 +216,49 @@ tbody tr:hover { background: var(--parchment); }
+ .btn-open:hover { border-color: var(--gold); color: var(--amber); }
+ 
+ .empty-state { background: var(--white); border-radius: 12px; padding: 40px; text-align: center; color: var(--sky); font-size: 13px; }
++
++/* ── New audit flow ────────────────────────────────────────────────────── */
++.btn-back { background: none; border: none; color: var(--sky); font-size: 12px; cursor: pointer; margin-bottom: 16px; padding: 0; }
++.btn-back:hover { color: var(--amber); }
++
++.audit-card { background: var(--white); border-radius: 12px; padding: 24px 28px; max-width: 720px; margin: 0 auto; }
++
++textarea.field-input { resize: vertical; min-height: 90px; font-family: inherit; }
++
++.field-hint { font-size: 11px; color: var(--sky); margin-top: -12px; margin-bottom: 16px; }
++
++.vendor-tag { display: inline-block; background: var(--parchment); border: 1px solid var(--border); border-radius: 6px; padding: 4px 10px; font-size: 11px; color: var(--ocean); margin-bottom: 16px; }
++
++.chat-thread { display: flex; flex-direction: column; gap: 12px; margin-bottom: 20px; max-height: 400px; overflow-y: auto; }
++.chat-bubble { max-width: 85%; padding: 10px 14px; border-radius: 10px; font-size: 13px; line-height: 1.5; }
++.chat-bubble.assistant { background: var(--parchment); color: var(--midnight); align-self: flex-start; border: 1px solid var(--border); }
++.chat-bubble.user { background: var(--navy); color: var(--white); align-self: flex-end; }
++
++.chat-input-row { display: flex; gap: 8px; }
++.chat-input-row textarea { flex: 1; min-height: 44px; }
++
++.progress-wrap { text-align: center; padding: 40px 20px; }
++.progress-bar-outer { background: var(--border); border-radius: 20px; height: 8px; overflow: hidden; margin: 16px 0 10px; }
++.progress-bar-inner { background: var(--gold); height: 100%; transition: width 0.3s ease; }
++.progress-label { font-size: 12px; color: var(--ocean); }
++.progress-current { font-size: 11px; color: var(--sky); margin-top: 4px; }
++
++.results-header { display: flex; gap: 20px; align-items: center; margin-bottom: 24px; }
++.results-score { text-align: center; background: var(--white); border-radius: 12px; padding: 20px 28px; }
++.results-score-num { font-size: 34px; font-weight: 700; color: var(--midnight); }
++.results-band { display: inline-block; margin-top: 6px; padding: 3px 12px; border-radius: 20px; font-size: 11px; font-weight: 700; color: var(--white); }
++.results-desc { font-size: 12px; color: var(--ocean); margin-top: 10px; max-width: 380px; }
++
++.function-group { margin-bottom: 22px; }
++.function-label { font-size: 11px; color: var(--sky); letter-spacing: 1px; text-transform: uppercase; margin-bottom: 10px; }
++
++.criterion-row { background: var(--white); border-radius: 10px; padding: 14px 18px; margin-bottom: 8px; }
++.criterion-top { display: flex; justify-content: space-between; align-items: flex-start; gap: 12px; }
++.criterion-name { font-size: 13px; font-weight: 500; color: var(--midnight); }
++.criterion-framework { font-size: 10px; color: var(--sky); margin-top: 2px; }
++.score-badge { flex-shrink: 0; font-size: 11px; font-weight: 700; color: var(--white); border-radius: 12px; padding: 3px 10px; }
++.criterion-rationale { font-size: 12px; color: var(--ocean); margin-top: 8px; line-height: 1.5; }
++.criterion-remediation { font-size: 12px; color: var(--amber); margin-top: 6px; padding-top: 6px; border-top: 1px solid var(--border); }
+ </style>
+ </head>
+ <body>
+@@ -285,12 +328,89 @@ tbody tr:hover { background: var(--parchment); }
+       <button class="btn-new" id="new-audit-btn">+ New audit</button>
+     </div>
+ 
+-    <div class="phase-note">Phase 1 build: dashboard and auth only. New audit, mentoring, and checklist open in later phases.</div>
++    <div class="phase-note">Phase 2 build: new audit intake and scoring are live. Mentoring and checklist open in later phases.</div>
+ 
+     <div id="sessions-table-wrap"></div>
+   </div>
+ </div>
+ 
++<div id="new-audit-view" class="hidden">
++  <div class="header">
++    <div class="header-left">
++      <svg width="44" height="44" viewBox="0 0 22 22" class="zeta-mark" style="width:44px;height:44px">
++        <line x1="4" y1="5" x2="18" y2="5" stroke="#e8a020" stroke-width="2.5" stroke-linecap="round"/>
++        <path d="M16 5 Q18 11 4 17" fill="none" stroke="#e8a020" stroke-width="2.5" stroke-linecap="round"/>
++        <line x1="4" y1="17" x2="18" y2="17" stroke="#e8a020" stroke-width="2.5" stroke-linecap="round"/>
++      </svg>
++      <div>
++        <div class="header-eyebrow">ZETA HEALTH AI</div>
++        <div class="header-title">New Audit</div>
++        <div class="header-tagline">Clinical operations, intelligently governed.</div>
++      </div>
++    </div>
++    <div class="header-right">
++      <button class="btn-ghost" id="audit-signout-btn">Sign out</button>
++    </div>
++  </div>
++
++  <div class="body-wrap">
++    <button class="btn-back" id="audit-back-btn">&larr; Back to dashboard</button>
++
++    <!-- Stage 1: describe -->
++    <div id="stage-describe" class="audit-card">
++      <div class="section-title" style="margin-bottom:16px">Describe the AI use case</div>
++
++      <label class="field-label" for="audit-title">Title (optional)</label>
++      <input class="field-input" id="audit-title" placeholder="e.g. Prior authorization decision support">
++
++      <label class="field-label" for="audit-vendor">Vendor</label>
++      <select class="field-input" id="audit-vendor">
++        <option value="">Auto-detect from description</option>
++      </select>
++
++      <label class="field-label" for="audit-usecase">What is the AI system, and what does it do?</label>
++      <textarea class="field-input" id="audit-usecase" placeholder="Describe the use case, what data it touches, who uses it, and what decisions it influences."></textarea>
++      <div class="field-hint">The more specific this is, the fewer intake questions you'll need to answer.</div>
++
++      <button class="btn-primary" id="start-audit-btn">Start audit</button>
++      <div class="login-error hidden" id="audit-start-error"></div>
++    </div>
++
++    <!-- Stage 2: intake chat -->
++    <div id="stage-intake" class="audit-card hidden">
++      <div id="intake-vendor-tag"></div>
++      <div class="chat-thread" id="chat-thread"></div>
++      <div class="chat-input-row">
++        <textarea class="field-input" id="intake-answer" placeholder="Type your answer…"></textarea>
++        <button class="btn-primary" id="intake-send-btn" style="width:auto; padding:0 20px;">Send</button>
++      </div>
++    </div>
++
++    <!-- Stage 3: evaluating -->
++    <div id="stage-evaluating" class="audit-card hidden">
++      <div class="progress-wrap">
++        <div class="section-title">Running the governance evaluation</div>
++        <div class="progress-bar-outer"><div class="progress-bar-inner" id="eval-progress-bar" style="width:0%"></div></div>
++        <div class="progress-label" id="eval-progress-label">Starting…</div>
++        <div class="progress-current" id="eval-progress-current"></div>
++      </div>
++    </div>
++
++    <!-- Stage 4: results -->
++    <div id="stage-results" class="hidden">
++      <div class="results-header">
++        <div class="results-score">
++          <div class="results-score-num" id="results-score-num">—</div>
++          <div class="results-band" id="results-band">—</div>
++        </div>
++        <div class="results-desc" id="results-desc"></div>
++      </div>
++      <div class="phase-note">Mentoring and the remediation checklist open in later phases. Results below are the full 24-criterion evaluation.</div>
++      <div id="results-groups"></div>
++    </div>
++  </div>
++</div>
++
+ <script>
+ const STATUS_LABELS = { intake: "In progress", scored: "Scored", mentoring: "In review", complete: "Action pending" };
+ const MATURITY_COLORS = { Emerging: "#c0392b", Developing: "#e67e22", Established: "#f1c40f", Mature: "#27ae60" };
+@@ -363,7 +483,7 @@ function renderSessions(data) {
+   </table>`;
+ 
+   wrap.querySelectorAll('.btn-open').forEach(btn => {
+-    btn.addEventListener('click', () => alert('Opens the audit detail view in phase 2.'));
++    btn.addEventListener('click', () => openExistingAudit(btn.dataset.id));
+   });
+ }
+ 
+@@ -417,10 +537,6 @@ document.getElementById('signout-btn').addEventListener('click', async () => {
+   location.reload();
+ });
+ 
+-document.getElementById('new-audit-btn').addEventListener('click', () => {
+-  alert('New audit intake, vendor detection, and scoring build in phase 2.');
+-});
+-
+ let searchTimer;
+ document.getElementById('search-input').addEventListener('input', e => {
+   clearTimeout(searchTimer);
+@@ -428,6 +544,225 @@ document.getElementById('search-input').addEventListener('input', e => {
+   searchTimer = setTimeout(() => loadSessions(q), 250);
+ });
+ 
++/* ── New audit flow ─────────────────────────────────────────────────────── */
++
++const newAuditView = document.getElementById('new-audit-view');
++const stageDescribe   = document.getElementById('stage-describe');
++const stageIntake     = document.getElementById('stage-intake');
++const stageEvaluating = document.getElementById('stage-evaluating');
++const stageResults    = document.getElementById('stage-results');
++
++let currentSessionId = null;
++let evalPollTimer = null;
++
++function showStage(stage) {
++  [stageDescribe, stageIntake, stageEvaluating, stageResults].forEach(s => s.classList.add('hidden'));
++  stage.classList.remove('hidden');
++}
++
++async function openNewAuditView() {
++  dashboardView.classList.add('hidden');
++  newAuditView.classList.remove('hidden');
++  currentSessionId = null;
++  document.getElementById('audit-title').value = '';
++  document.getElementById('audit-usecase').value = '';
++  document.getElementById('audit-start-error').classList.add('hidden');
++  showStage(stageDescribe);
++
++  const vendorSelect = document.getElementById('audit-vendor');
++  vendorSelect.innerHTML = '<option value="">Auto-detect from description</option>';
++  try {
++    const data = await api('api/vendors');
++    data.vendors.filter(v => v.key).forEach(v => {
++      const opt = document.createElement('option');
++      opt.value = v.key;
++      opt.textContent = v.label;
++      vendorSelect.appendChild(opt);
++    });
++  } catch { /* vendor list is a nice-to-have, don't block the form on it */ }
++}
++
++function closeNewAuditView() {
++  clearInterval(evalPollTimer);
++  newAuditView.classList.add('hidden');
++  dashboardView.classList.remove('hidden');
++  loadSessions();
++}
++
++document.getElementById('new-audit-btn').addEventListener('click', openNewAuditView);
++document.getElementById('audit-back-btn').addEventListener('click', closeNewAuditView);
++document.getElementById('audit-signout-btn').addEventListener('click', async () => {
++  await api('api/logout', { method: 'POST' });
++  location.reload();
++});
++
++function addChatBubble(role, text) {
++  const thread = document.getElementById('chat-thread');
++  const div = document.createElement('div');
++  div.className = 'chat-bubble ' + role;
++  div.textContent = text;
++  thread.appendChild(div);
++  thread.scrollTop = thread.scrollHeight;
++}
++
++document.getElementById('start-audit-btn').addEventListener('click', async () => {
++  const errEl = document.getElementById('audit-start-error');
++  errEl.classList.add('hidden');
++  const useCase = document.getElementById('audit-usecase').value.trim();
++  if (!useCase) {
++    errEl.textContent = 'Describe the use case before starting.';
++    errEl.classList.remove('hidden');
++    return;
++  }
++  const title = document.getElementById('audit-title').value.trim();
++  const vendorKey = document.getElementById('audit-vendor').value || null;
++
++  try {
++    const data = await api('api/audits', {
++      method: 'POST',
++      body: JSON.stringify({ title, use_case: useCase, vendor_key: vendorKey }),
++    });
++    currentSessionId = data.session_id;
++
++    document.getElementById('chat-thread').innerHTML = '';
++    const tagEl = document.getElementById('intake-vendor-tag');
++    tagEl.innerHTML = data.vendor_display
++      ? `<span class="vendor-tag">Vendor detected: ${escapeHtml(data.vendor_display)}</span>`
++      : '';
++    addChatBubble('assistant', data.question);
++    document.getElementById('intake-answer').value = '';
++    showStage(stageIntake);
++  } catch (err) {
++    errEl.textContent = err.message;
++    errEl.classList.remove('hidden');
++  }
++});
++
++async function sendIntakeAnswer() {
++  const input = document.getElementById('intake-answer');
++  const answer = input.value.trim();
++  if (!answer || !currentSessionId) return;
++  addChatBubble('user', answer);
++  input.value = '';
++
++  try {
++    const data = await api(`api/audits/${currentSessionId}/intake`, {
++      method: 'POST',
++      body: JSON.stringify({ answer }),
++    });
++    if (data.complete) {
++      addChatBubble('assistant', 'Got what I need. Starting the governance evaluation now.');
++      startEvaluation();
++    } else {
++      addChatBubble('assistant', data.question);
++    }
++  } catch (err) {
++    addChatBubble('assistant', `Something went wrong: ${err.message}`);
++  }
++}
++
++document.getElementById('intake-send-btn').addEventListener('click', sendIntakeAnswer);
++document.getElementById('intake-answer').addEventListener('keydown', e => {
++  if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); sendIntakeAnswer(); }
++});
++
++async function startEvaluation() {
++  showStage(stageEvaluating);
++  document.getElementById('eval-progress-bar').style.width = '0%';
++  document.getElementById('eval-progress-label').textContent = 'Starting…';
++  document.getElementById('eval-progress-current').textContent = '';
++
++  await api(`api/audits/${currentSessionId}/evaluate`, { method: 'POST' });
++
++  evalPollTimer = setInterval(async () => {
++    try {
++      const p = await api(`api/audits/${currentSessionId}/evaluate/progress`);
++      const pct = p.total ? Math.round((p.done / p.total) * 100) : 0;
++      document.getElementById('eval-progress-bar').style.width = pct + '%';
++      document.getElementById('eval-progress-label').textContent = `${p.done} of ${p.total} criteria evaluated`;
++      document.getElementById('eval-progress-current').textContent = p.current || '';
++
++      if (p.complete) {
++        clearInterval(evalPollTimer);
++        if (p.error) {
++          document.getElementById('eval-progress-label').textContent = 'Evaluation failed, see current status for details.';
++        } else {
++          const full = await api(`api/audits/${currentSessionId}`);
++          renderResults(full);
++          showStage(stageResults);
++        }
++      }
++    } catch {
++      clearInterval(evalPollTimer);
++    }
++  }, 1500);
++}
++
++function scoreColor(score) {
++  if (score <= 2) return '#c0392b';
++  if (score === 3) return '#e67e22';
++  return '#27ae60';
++}
++
++function renderResults(full) {
++  const s = full.session;
++  document.getElementById('results-score-num').textContent = s.overall_pct != null ? `${s.overall_pct}%` : '—';
++  const bandEl = document.getElementById('results-band');
++  bandEl.textContent = s.maturity_label || '—';
++  bandEl.style.background = s.maturity_color || 'var(--sky)';
++  document.getElementById('results-desc').textContent = s.maturity_desc || '';
++
++  const groups = {};
++  full.results.forEach(r => {
++    if (!groups[r.function]) groups[r.function] = [];
++    groups[r.function].push(r);
++  });
++
++  const html = Object.entries(groups).map(([fn, rows]) => `
++    <div class="function-group">
++      <div class="function-label">${escapeHtml(fn)}</div>
++      ${rows.map(r => `
++        <div class="criterion-row">
++          <div class="criterion-top">
++            <div>
++              <div class="criterion-name">${escapeHtml(r.criterion_name)}</div>
++              <div class="criterion-framework">${escapeHtml(r.criterion_id)}</div>
++            </div>
++            <span class="score-badge" style="background:${scoreColor(r.score)}">${r.score} / 5</span>
++          </div>
++          <div class="criterion-rationale">${escapeHtml(r.rationale)}</div>
++          ${r.remediation ? `<div class="criterion-remediation">Remediation: ${escapeHtml(r.remediation)}</div>` : ''}
++        </div>
++      `).join('')}
++    </div>
++  `).join('');
++
++  document.getElementById('results-groups').innerHTML = html;
++}
++
++async function openExistingAudit(id) {
++  try {
++    const full = await api(`api/audits/${id}`);
++    dashboardView.classList.add('hidden');
++    newAuditView.classList.remove('hidden');
++    currentSessionId = id;
++    if (full.session.status === 'intake') {
++      document.getElementById('results-groups').innerHTML =
++        '<div class="empty-state">This audit was never finished, intake was never completed. Start a new audit instead.</div>';
++      document.getElementById('results-score-num').textContent = '—';
++      document.getElementById('results-band').textContent = 'Incomplete';
++      document.getElementById('results-band').style.background = 'var(--sky)';
++      document.getElementById('results-desc').textContent = '';
++      showStage(stageResults);
++    } else {
++      renderResults(full);
++      showStage(stageResults);
++    }
++  } catch (err) {
++    alert(`Couldn't open that audit: ${err.message}`);
++  }
++}
++
+ checkSession();
+ </script>
+ </body>
+diff --git a/vendor_detector.py b/vendor_detector.py
+index 30cca62..0545117 100644
+--- a/vendor_detector.py
++++ b/vendor_detector.py
+@@ -35,9 +35,8 @@ def detect_vendor_llm(use_case: str) -> dict:
+     Use LLM to detect vendor from use case description.
+     Falls back to keyword matching on failure.
+     """
+-    client = Groq(api_key=os.getenv("GROQ_API_KEY"))
+-
+     try:
++        client = Groq(api_key=os.getenv("GROQ_API_KEY"))
+         response = client.chat.completions.create(
+             model=os.getenv("MODEL_NAME", "llama-3.3-70b-versatile"),
+             messages=[
+-- 
+2.43.0
+

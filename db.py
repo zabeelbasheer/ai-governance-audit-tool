@@ -334,6 +334,26 @@ def get_checklist(session_id: int):
     return [dict(r) for r in rows]
 
 
+def get_all_checklist_items(user_id: int = None):
+    """Every action item across every audit, for the cross-audit checklist view.
+    Pass user_id to scope to one user's own audits, omit for all (admin/auditor/DPO)."""
+    conn = get_conn()
+    query = """SELECT c.*, s.title AS audit_title, s.vendor_name, s.user_id AS audit_owner_id,
+                      u.display_name AS audit_owner_name
+               FROM checklist_items c
+               JOIN audit_sessions s ON c.session_id = s.id
+               JOIN users u ON s.user_id = u.id
+               WHERE s.deleted_at IS NULL"""
+    params = ()
+    if user_id is not None:
+        query += " AND s.user_id = ?"
+        params = (user_id,)
+    query += " ORDER BY c.status, c.due_date"
+    rows = conn.execute(query, params).fetchall()
+    conn.close()
+    return [dict(r) for r in rows]
+
+
 def update_checklist_item(item_id: int, status: str, owner: str, due_date: str):
     conn = get_conn()
     conn.execute(

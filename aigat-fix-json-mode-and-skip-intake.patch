@@ -1,0 +1,166 @@
+From 0d58963e6694233dd05ffc0416d8c1e305a3d7c5 Mon Sep 17 00:00:00 2001
+From: zabeelbasheer <53309631+zabeelbasheer@users.noreply.github.com>
+Date: Sat, 22 Aug 2026 18:51:52 +0000
+Subject: [PATCH 4/4] fix: force JSON mode + low reasoning effort on structured
+ Groq calls; add skip-intake preliminary audit path
+
+gpt-oss-120b is a reasoning model. Groq's own docs and community forum
+confirm it sometimes puts content in the reasoning field instead of
+content, which broke json.loads() in evaluator.py and vendor_detector.py,
+silently defaulting most criteria to the score=1 fallback. Added
+response_format={type:json_object} to force clean JSON in content,
+and reasoning_effort=low everywhere, both for reliability and latency,
+this is simple extraction/scoring, not a task needing deep reasoning.
+
+Also adds a skip_intake option: a secondary button that scores the raw
+description directly, no clarifying questions, for a fast preliminary
+read before committing to the full intake conversation.
+---
+ evaluator.py            |  2 ++
+ governance_audit_app.py | 15 +++++++++++++++
+ index.html              | 16 +++++++++++++---
+ intake_agent.py         |  3 +++
+ vendor_detector.py      |  2 ++
+ 5 files changed, 35 insertions(+), 3 deletions(-)
+
+diff --git a/evaluator.py b/evaluator.py
+index dd22911..39d90c0 100644
+--- a/evaluator.py
++++ b/evaluator.py
+@@ -84,6 +84,8 @@ def evaluate_criterion(client: Groq, use_case: str, criterion: dict,
+             ],
+             temperature=0.1,
+             max_tokens=300,
++            response_format={"type": "json_object"},
++            reasoning_effort="low",
+         )
+         raw = response.choices[0].message.content.strip()
+         if raw.startswith("```"):
+diff --git a/governance_audit_app.py b/governance_audit_app.py
+index 5c620ef..5cc7b18 100644
+--- a/governance_audit_app.py
++++ b/governance_audit_app.py
+@@ -135,6 +135,7 @@ class NewAuditBody(BaseModel):
+     title: str = ""
+     use_case: str
+     vendor_key: str | None = None  # None = auto-detect
++    skip_intake: bool = False
+ 
+ 
+ @app.post("/api/audits")
+@@ -160,6 +161,20 @@ def start_audit(body: NewAuditBody, request: Request):
+     use_case = body.use_case.strip()
+     title = body.title.strip() or (use_case[:60] + ("…" if len(use_case) > 60 else ""))
+ 
++    if body.skip_intake:
++        # Preliminary audit: score the raw description as-is, no clarifying questions.
++        # Scores from this path are a rough pass, not the full picture, the intake
++        # conversation exists specifically to close gaps a short description leaves open.
++        session_id = create_audit_session(user["id"], title, use_case)
++        if vendor_display:
++            update_session_vendor(session_id, vendor_display)
++        return {
++            "session_id": session_id,
++            "vendor_key": vendor_key,
++            "vendor_display": vendor_display,
++            "skip_intake": True,
++        }
++
+     try:
+         opening_q = get_opening_question(use_case, vendor_key)
+     except Exception as e:
+diff --git a/index.html b/index.html
+index 8028fb4..ccc9b72 100644
+--- a/index.html
++++ b/index.html
+@@ -373,6 +373,8 @@ textarea.field-input { resize: vertical; min-height: 90px; font-family: inherit;
+       <div class="field-hint">The more specific this is, the fewer intake questions you'll need to answer.</div>
+ 
+       <button class="btn-primary" id="start-audit-btn">Start audit</button>
++      <button class="btn-ghost" id="skip-intake-btn" style="margin-top:8px;">Skip questions, run a preliminary score</button>
++      <div class="field-hint" style="margin-top:8px;">Preliminary scores are a rough pass on the description alone. The intake questions exist to close the gaps a short description leaves, worth doing before treating a score as final.</div>
+       <div class="login-error hidden" id="audit-start-error"></div>
+     </div>
+ 
+@@ -605,7 +607,7 @@ function addChatBubble(role, text) {
+   thread.scrollTop = thread.scrollHeight;
+ }
+ 
+-document.getElementById('start-audit-btn').addEventListener('click', async () => {
++async function submitNewAudit(skipIntake) {
+   const errEl = document.getElementById('audit-start-error');
+   errEl.classList.add('hidden');
+   const useCase = document.getElementById('audit-usecase').value.trim();
+@@ -620,10 +622,15 @@ document.getElementById('start-audit-btn').addEventListener('click', async () =>
+   try {
+     const data = await api('api/audits', {
+       method: 'POST',
+-      body: JSON.stringify({ title, use_case: useCase, vendor_key: vendorKey }),
++      body: JSON.stringify({ title, use_case: useCase, vendor_key: vendorKey, skip_intake: skipIntake }),
+     });
+     currentSessionId = data.session_id;
+ 
++    if (data.skip_intake) {
++      startEvaluation();
++      return;
++    }
++
+     document.getElementById('chat-thread').innerHTML = '';
+     const tagEl = document.getElementById('intake-vendor-tag');
+     tagEl.innerHTML = data.vendor_display
+@@ -636,7 +643,10 @@ document.getElementById('start-audit-btn').addEventListener('click', async () =>
+     errEl.textContent = err.message;
+     errEl.classList.remove('hidden');
+   }
+-});
++}
++
++document.getElementById('start-audit-btn').addEventListener('click', () => submitNewAudit(false));
++document.getElementById('skip-intake-btn').addEventListener('click', () => submitNewAudit(true));
+ 
+ async function sendIntakeAnswer() {
+   const input = document.getElementById('intake-answer');
+diff --git a/intake_agent.py b/intake_agent.py
+index 0940418..33e22c2 100644
+--- a/intake_agent.py
++++ b/intake_agent.py
+@@ -130,6 +130,7 @@ def get_opening_question(use_case: str, vendor_key: str = None) -> str:
+         ],
+         temperature=0.3,
+         max_tokens=200,
++        reasoning_effort="low",
+     )
+     return response.choices[0].message.content.strip()
+ 
+@@ -148,6 +149,7 @@ def get_next_question(conversation_history: list,
+         messages=[{"role": "system", "content": system_prompt}] + conversation_history,
+         temperature=0.3,
+         max_tokens=400,
++        reasoning_effort="low",
+     )
+     content = response.choices[0].message.content.strip()
+ 
+@@ -205,6 +207,7 @@ def enrich_use_case(use_case_raw: str, conversation_history: list,
+         messages=messages,
+         temperature=0.2,
+         max_tokens=800,
++        reasoning_effort="low",
+     )
+     return response.choices[0].message.content.strip()
+ 
+diff --git a/vendor_detector.py b/vendor_detector.py
+index 1f34e4c..221463d 100644
+--- a/vendor_detector.py
++++ b/vendor_detector.py
+@@ -45,6 +45,8 @@ def detect_vendor_llm(use_case: str) -> dict:
+             ],
+             temperature=0.0,
+             max_tokens=100,
++            response_format={"type": "json_object"},
++            reasoning_effort="low",
+         )
+         raw = response.choices[0].message.content.strip()
+         if raw.startswith("```"):
+-- 
+2.43.0
+

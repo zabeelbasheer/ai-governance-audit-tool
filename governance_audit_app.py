@@ -15,7 +15,7 @@ from contextlib import asynccontextmanager
 from datetime import datetime, timedelta
 
 from fastapi import FastAPI, Request, HTTPException
-from fastapi.responses import FileResponse
+from fastapi.responses import FileResponse, Response
 from pydantic import BaseModel
 from starlette.middleware.sessions import SessionMiddleware
 
@@ -24,9 +24,10 @@ from db import (
     create_audit_session, update_session_vendor, update_session_enriched,
     update_session_scores, update_session_status, get_session, save_audit_results,
     get_audit_results, save_intake_message, get_intake_messages,
-    save_checklist_items, get_checklist,
+    save_checklist_items, get_checklist, get_all_checklist_items, update_checklist_item,
     soft_delete_session, restore_session, get_deleted_sessions,
 )
+from report_generator import generate_pdf_report
 from auth import verify_credentials, ROLE_LABELS
 from vendor_detector import detect_vendor_llm, get_all_vendor_options
 from vendor_kb import VENDOR_KB
@@ -345,7 +346,11 @@ def get_audit(session_id: int, request: Request):
     session = get_session(session_id)
     if not session:
         raise HTTPException(status_code=404, detail="Audit session not found.")
-    return {"session": session, "results": get_audit_results(session_id)}
+    return {
+        "session": session,
+        "results": get_audit_results(session_id),
+        "intake_messages": get_intake_messages(session_id),
+    }
 
 
 # ── Phase 3: mentor flow ──────────────────────────────────────────────────────
@@ -468,6 +473,54 @@ def get_audit_checklist(session_id: int, request: Request):
     if not session:
         raise HTTPException(status_code=404, detail="Audit session not found.")
     return {"items": get_checklist(session_id)}
+
+
+@app.get("/api/audits/{session_id}/pdf")
+def audit_pdf(session_id: int, request: Request):
+    user = request.session.get("user")
+    if not user:
+        raise HTTPException(status_code=401, detail="Not signed in.")
+    session = get_session(session_id)
+    if not session:
+        raise HTTPException(status_code=404, detail="Audit session not found.")
+    if session["status"] not in ("scored", "mentoring", "complete"):
+        raise HTTPException(status_code=400, detail="This audit hasn't been scored yet.")
+
+    results = get_audit_results(session_id)
+    checklist_items = get_checklist(session_id)
+    buf = generate_pdf_report(session, results, checklist_items)
+
+    filename = f"governance-audit-{session_id}.pdf"
+    return Response(
+        content=buf.getvalue(),
+        media_type="application/pdf",
+        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+    )
+
+
+@app.get("/api/checklist")
+def checklist(request: Request):
+    user = request.session.get("user")
+    if not user:
+        raise HTTPException(status_code=401, detail="Not signed in.")
+    items = get_all_checklist_items() if can_view_all(user["role"]) else get_all_checklist_items(user["id"])
+    return {"items": items, "can_view_all": can_view_all(user["role"])}
+
+
+class ChecklistUpdateBody(BaseModel):
+    status: str
+    owner: str = ""
+    due_date: str = ""
+
+
+@app.patch("/api/checklist/{item_id}")
+def update_checklist(item_id: int, body: ChecklistUpdateBody, request: Request):
+    if not request.session.get("user"):
+        raise HTTPException(status_code=401, detail="Not signed in.")
+    if body.status not in ("pending", "in_progress", "done"):
+        raise HTTPException(status_code=400, detail="Status must be pending, in_progress, or done.")
+    update_checklist_item(item_id, body.status, body.owner, body.due_date)
+    return {"ok": True}
 
 
 @app.get("/")

@@ -236,6 +236,15 @@ textarea.field-input { resize: vertical; min-height: 90px; font-family: inherit;
 
 .chat-input-row { display: flex; gap: 8px; align-items: flex-end; }
 .chat-input-row textarea { flex: 1; min-height: 140px; resize: vertical; }
+.btn-send {
+  width: auto;
+  flex-shrink: 0;
+  height: 44px;
+  padding: 0 22px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
 
 .progress-wrap { text-align: center; padding: 40px 20px; }
 .progress-bar-outer { background: var(--border); border-radius: 20px; height: 8px; overflow: hidden; margin: 16px 0 10px; }
@@ -325,12 +334,38 @@ textarea.field-input { resize: vertical; min-height: 90px; font-family: inherit;
 
     <div class="toolbar">
       <input class="search-input" id="search-input" placeholder="Search by user, title, score, or vendor…">
+      <button class="btn-ghost" id="view-checklist-btn" style="white-space:nowrap;">Checklist</button>
       <button class="btn-ghost" id="view-trash-btn" style="white-space:nowrap;">Recently deleted</button>
       <button class="btn-new" id="new-audit-btn">+ New audit</button>
     </div>
 
     <div id="sessions-table-wrap"></div>
     <div id="trash-table-wrap" class="hidden"></div>
+  </div>
+</div>
+
+<div id="checklist-view" class="hidden">
+  <div class="header">
+    <div class="header-left">
+      <svg width="44" height="44" viewBox="0 0 22 22" class="zeta-mark" style="width:44px;height:44px">
+        <line x1="4" y1="5" x2="18" y2="5" stroke="#e8a020" stroke-width="2.5" stroke-linecap="round"/>
+        <path d="M16 5 Q18 11 4 17" fill="none" stroke="#e8a020" stroke-width="2.5" stroke-linecap="round"/>
+        <line x1="4" y1="17" x2="18" y2="17" stroke="#e8a020" stroke-width="2.5" stroke-linecap="round"/>
+      </svg>
+      <div>
+        <div class="header-eyebrow">ZETA HEALTH AI</div>
+        <div class="header-title">Checklist</div>
+        <div class="header-tagline">Clinical operations, intelligently governed.</div>
+      </div>
+    </div>
+    <div class="header-right">
+      <button class="btn-ghost" id="checklist-signout-btn">Sign out</button>
+    </div>
+  </div>
+  <div class="body-wrap">
+    <button class="btn-back" id="checklist-back-btn">&larr; Back to dashboard</button>
+    <div class="section-title" id="checklist-heading" style="margin-bottom:16px;">Remediation action items</div>
+    <div id="checklist-view-table-wrap"></div>
   </div>
 </div>
 
@@ -384,7 +419,7 @@ textarea.field-input { resize: vertical; min-height: 90px; font-family: inherit;
       <div class="chat-thread" id="chat-thread"></div>
       <div class="chat-input-row">
         <textarea class="field-input" id="intake-answer" placeholder="Type your answer…"></textarea>
-        <button class="btn-primary" id="intake-send-btn" style="width:auto; padding:0 20px;">Send</button>
+        <button class="btn-primary btn-send" id="intake-send-btn">Send</button>
       </div>
     </div>
 
@@ -405,12 +440,16 @@ textarea.field-input { resize: vertical; min-height: 90px; font-family: inherit;
           <div class="results-score-num" id="results-score-num">—</div>
           <div class="results-band" id="results-band">—</div>
         </div>
-        <div class="results-desc" id="results-desc"></div>
+        <div class="results-desc" id="results-desc" style="flex:1;"></div>
+        <a class="btn-ghost hidden" id="export-pdf-link" style="text-decoration:none; white-space:nowrap;" target="_blank">Export PDF</a>
       </div>
       <div id="mentor-trigger-wrap" class="hidden" style="margin-bottom:16px;">
         <button class="btn-new" id="start-mentoring-btn">Start mentoring on the gaps found</button>
       </div>
-      <div class="phase-note" id="checklist-phase-note">The remediation checklist page opens in phase 4. Action items from mentoring are saved and viewable below once generated.</div>
+      <div class="audit-card" style="max-width:none; margin-bottom:16px;">
+        <button class="btn-back" id="audit-trail-toggle" style="margin-bottom:0;">▸ Audit trail: original description, intake conversation, and audited scope</button>
+        <div id="audit-trail-body" class="hidden" style="margin-top:14px;"></div>
+      </div>
       <div id="results-groups"></div>
       <div id="checklist-preview"></div>
     </div>
@@ -422,7 +461,7 @@ textarea.field-input { resize: vertical; min-height: 90px; font-family: inherit;
       <div class="chat-thread" id="mentor-thread"></div>
       <div id="mentor-input-row" class="chat-input-row">
         <textarea class="field-input" id="mentor-answer" placeholder="Describe where things stand today…"></textarea>
-        <button class="btn-primary" id="mentor-send-btn" style="width:auto; padding:0 20px;">Send</button>
+        <button class="btn-primary btn-send" id="mentor-send-btn">Send</button>
       </div>
       <div id="mentor-done-wrap" class="hidden" style="text-align:center; padding:20px;">
         <div class="section-title" style="margin-bottom:12px;">Mentoring complete</div>
@@ -582,6 +621,90 @@ document.getElementById('view-trash-btn').addEventListener('click', () => {
   document.getElementById('sessions-table-wrap').classList.toggle('hidden', trashVisible);
   document.getElementById('view-trash-btn').textContent = trashVisible ? 'Back to audits' : 'Recently deleted';
   if (trashVisible) loadTrash();
+});
+
+/* ── Cross-audit checklist view ─────────────────────────────────────────── */
+
+async function saveChecklistItem(id, status, owner, dueDate) {
+  await api(`api/checklist/${id}`, {
+    method: 'PATCH',
+    body: JSON.stringify({ status, owner, due_date: dueDate }),
+  });
+}
+
+function renderChecklistView(data) {
+  document.getElementById('checklist-heading').textContent = data.can_view_all
+    ? 'Remediation action items, all audits'
+    : 'Remediation action items, your audits';
+
+  const wrap = document.getElementById('checklist-view-table-wrap');
+  if (!data.items.length) {
+    wrap.innerHTML = '<div class="empty-state">No action items yet. They show up here once you run mentoring on a scored audit.</div>';
+    return;
+  }
+
+  const rows = data.items.map(it => `
+    <tr data-item-id="${it.id}">
+      <td>
+        <div class="cell-title">${escapeHtml(it.action)}</div>
+        <div class="cell-sub">${escapeHtml(it.audit_title)}${it.audit_owner_name ? ' · ' + escapeHtml(it.audit_owner_name) : ''}</div>
+      </td>
+      <td><input class="field-input checklist-owner" style="margin-bottom:0; padding:6px 8px; font-size:12px;" value="${escapeHtml(it.owner || '')}" placeholder="Unassigned"></td>
+      <td><input type="date" class="field-input checklist-due" style="margin-bottom:0; padding:6px 8px; font-size:12px;" value="${escapeHtml(it.due_date || '')}"></td>
+      <td>
+        <select class="field-input checklist-status" style="margin-bottom:0; padding:6px 8px; font-size:12px;">
+          <option value="pending" ${it.status === 'pending' ? 'selected' : ''}>Pending</option>
+          <option value="in_progress" ${it.status === 'in_progress' ? 'selected' : ''}>In progress</option>
+          <option value="done" ${it.status === 'done' ? 'selected' : ''}>Done</option>
+        </select>
+      </td>
+    </tr>
+  `).join('');
+
+  wrap.innerHTML = `<table>
+    <thead><tr><th>Action item</th><th>Owner</th><th>Due</th><th>Status</th></tr></thead>
+    <tbody>${rows}</tbody>
+  </table>`;
+
+  wrap.querySelectorAll('tr[data-item-id]').forEach(row => {
+    const id = row.dataset.itemId;
+    const ownerInput = row.querySelector('.checklist-owner');
+    const dueInput = row.querySelector('.checklist-due');
+    const statusSelect = row.querySelector('.checklist-status');
+
+    const save = async () => {
+      try {
+        await saveChecklistItem(id, statusSelect.value, ownerInput.value, dueInput.value);
+      } catch (err) {
+        alert(`Couldn't save: ${err.message}`);
+      }
+    };
+    ownerInput.addEventListener('blur', save);
+    dueInput.addEventListener('change', save);
+    statusSelect.addEventListener('change', save);
+  });
+}
+
+async function loadChecklistView() {
+  const data = await api('api/checklist');
+  renderChecklistView(data);
+}
+
+document.getElementById('view-checklist-btn').addEventListener('click', () => {
+  dashboardView.classList.add('hidden');
+  document.getElementById('checklist-view').classList.remove('hidden');
+  loadChecklistView();
+});
+
+document.getElementById('checklist-back-btn').addEventListener('click', () => {
+  document.getElementById('checklist-view').classList.add('hidden');
+  dashboardView.classList.remove('hidden');
+  loadSessions(document.getElementById('search-input').value);
+});
+
+document.getElementById('checklist-signout-btn').addEventListener('click', async () => {
+  await api('api/logout', { method: 'POST' });
+  location.reload();
 });
 
 let currentUser = null;
@@ -808,8 +931,44 @@ function scoreColor(score) {
   return '#27ae60';
 }
 
+function renderAuditTrail(session, intakeMessages) {
+  const parts = [];
+  parts.push(`<div class="field-label" style="margin-bottom:4px;">Original description</div>`);
+  parts.push(`<div class="answer-markdown" style="margin-bottom:16px; color:var(--ocean);">${escapeHtml(session.use_case_raw)}</div>`);
+
+  if (session.use_case_enriched && session.use_case_enriched !== session.use_case_raw) {
+    parts.push(`<div class="field-label" style="margin-bottom:4px;">Audited scope (after intake)</div>`);
+    parts.push(`<div class="answer-markdown" style="margin-bottom:16px; color:var(--midnight);">${escapeHtml(session.use_case_enriched)}</div>`);
+  }
+
+  if (intakeMessages.length) {
+    parts.push(`<div class="field-label" style="margin-bottom:8px;">Intake conversation</div>`);
+    parts.push(`<div class="chat-thread" style="max-height:none;">`);
+    intakeMessages.forEach(m => {
+      parts.push(`<div class="chat-bubble ${m.role === 'user' ? 'user' : 'assistant'}">${escapeHtml(m.content)}</div>`);
+    });
+    parts.push(`</div>`);
+  } else {
+    parts.push(`<div class="field-hint">No intake conversation, this audit was scored from the description alone.</div>`);
+  }
+
+  document.getElementById('audit-trail-body').innerHTML = parts.join('');
+}
+
+document.getElementById('audit-trail-toggle').addEventListener('click', () => {
+  const body = document.getElementById('audit-trail-body');
+  const nowHidden = body.classList.toggle('hidden');
+  document.getElementById('audit-trail-toggle').textContent =
+    (nowHidden ? '▸' : '▾') + ' Audit trail: original description, intake conversation, and audited scope';
+});
+
 function renderResults(full) {
+  renderAuditTrail(full.session, full.intake_messages || []);
   const s = full.session;
+
+  const exportLink = document.getElementById('export-pdf-link');
+  exportLink.href = `api/audits/${s.id}/pdf`;
+  exportLink.classList.remove('hidden');
   document.getElementById('results-score-num').textContent = s.overall_pct != null ? `${s.overall_pct}%` : '—';
   const bandEl = document.getElementById('results-band');
   bandEl.textContent = s.maturity_label || '—';
@@ -974,6 +1133,9 @@ async function openExistingAudit(id) {
     newAuditView.classList.remove('hidden');
     currentSessionId = id;
     if (full.session.status === 'intake') {
+      renderAuditTrail(full.session, full.intake_messages || []);
+      document.getElementById('export-pdf-link').classList.add('hidden');
+      document.getElementById('mentor-trigger-wrap').classList.add('hidden');
       document.getElementById('results-groups').innerHTML =
         '<div class="empty-state">This audit was never finished, intake was never completed. Start a new audit instead.</div>';
       document.getElementById('results-score-num').textContent = '—';
