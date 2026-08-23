@@ -407,8 +407,27 @@ textarea.field-input { resize: vertical; min-height: 90px; font-family: inherit;
         </div>
         <div class="results-desc" id="results-desc"></div>
       </div>
-      <div class="phase-note">Mentoring and the remediation checklist open in later phases. Results below are the full 24-criterion evaluation.</div>
+      <div id="mentor-trigger-wrap" class="hidden" style="margin-bottom:16px;">
+        <button class="btn-new" id="start-mentoring-btn">Start mentoring on the gaps found</button>
+      </div>
+      <div class="phase-note" id="checklist-phase-note">The remediation checklist page opens in phase 4. Action items from mentoring are saved and viewable below once generated.</div>
       <div id="results-groups"></div>
+      <div id="checklist-preview"></div>
+    </div>
+
+    <!-- Stage 5: mentoring -->
+    <div id="stage-mentor" class="audit-card hidden">
+      <div id="mentor-progress" class="field-hint" style="margin-top:0;"></div>
+      <div id="mentor-criterion-context" style="margin-bottom:14px;"></div>
+      <div class="chat-thread" id="mentor-thread"></div>
+      <div id="mentor-input-row" class="chat-input-row">
+        <textarea class="field-input" id="mentor-answer" placeholder="Describe where things stand today…"></textarea>
+        <button class="btn-primary" id="mentor-send-btn" style="width:auto; padding:0 20px;">Send</button>
+      </div>
+      <div id="mentor-done-wrap" class="hidden" style="text-align:center; padding:20px;">
+        <div class="section-title" style="margin-bottom:12px;">Mentoring complete</div>
+        <button class="btn-ghost" id="mentor-back-btn">Back to results</button>
+      </div>
     </div>
   </div>
 </div>
@@ -553,12 +572,13 @@ const stageDescribe   = document.getElementById('stage-describe');
 const stageIntake     = document.getElementById('stage-intake');
 const stageEvaluating = document.getElementById('stage-evaluating');
 const stageResults    = document.getElementById('stage-results');
+const stageMentor     = document.getElementById('stage-mentor');
 
 let currentSessionId = null;
 let evalPollTimer = null;
 
 function showStage(stage) {
-  [stageDescribe, stageIntake, stageEvaluating, stageResults].forEach(s => s.classList.add('hidden'));
+  [stageDescribe, stageIntake, stageEvaluating, stageResults, stageMentor].forEach(s => s.classList.add('hidden'));
   stage.classList.remove('hidden');
 }
 
@@ -598,8 +618,8 @@ document.getElementById('audit-signout-btn').addEventListener('click', async () 
   location.reload();
 });
 
-function addChatBubble(role, text) {
-  const thread = document.getElementById('chat-thread');
+function addChatBubble(role, text, threadId = 'chat-thread') {
+  const thread = document.getElementById(threadId);
   const div = document.createElement('div');
   div.className = 'chat-bubble ' + role;
   div.textContent = text;
@@ -748,7 +768,130 @@ function renderResults(full) {
   `).join('');
 
   document.getElementById('results-groups').innerHTML = html;
+
+  const gapCount = full.results.filter(r => r.score <= 3).length;
+  const triggerWrap = document.getElementById('mentor-trigger-wrap');
+  const triggerBtn = document.getElementById('start-mentoring-btn');
+  if (gapCount > 0 && s.status !== 'complete') {
+    triggerWrap.classList.remove('hidden');
+    triggerBtn.textContent = `Start mentoring on ${gapCount} gap${gapCount === 1 ? '' : 's'} found`;
+  } else {
+    triggerWrap.classList.add('hidden');
+  }
+
+  loadChecklistPreview(full.session.id);
 }
+
+function renderChecklist(items) {
+  const wrap = document.getElementById('checklist-preview');
+  if (!items.length) { wrap.innerHTML = ''; return; }
+  wrap.innerHTML = `
+    <div class="section-title" style="margin:20px 0 10px;">Action items</div>
+    ${items.map(it => `
+      <div class="criterion-row">
+        <div class="criterion-top">
+          <div>
+            <div class="criterion-name">${escapeHtml(it.action)}</div>
+            <div class="criterion-framework">${escapeHtml(it.criterion_id)}${it.owner ? ' · ' + escapeHtml(it.owner) : ''}${it.due_date ? ' · due ' + escapeHtml(it.due_date) : ''}</div>
+          </div>
+          <span class="score-badge" style="background:var(--sky)">${escapeHtml(it.status)}</span>
+        </div>
+      </div>
+    `).join('')}
+  `;
+}
+
+async function loadChecklistPreview(sessionId) {
+  try {
+    const data = await api(`api/audits/${sessionId}/checklist`);
+    renderChecklist(data.items);
+  } catch { /* non-fatal, results still shown without the checklist preview */ }
+}
+
+/* ── Mentor flow ────────────────────────────────────────────────────────── */
+
+function renderMentorProgress(index, total) {
+  document.getElementById('mentor-progress').textContent = `Gap ${index + 1} of ${total}`;
+}
+
+function renderMentorCriterion(criterion) {
+  document.getElementById('mentor-criterion-context').innerHTML = `
+    <div class="criterion-row" style="margin-bottom:0;">
+      <div class="criterion-top">
+        <div>
+          <div class="criterion-name">${escapeHtml(criterion.criterion_name)}</div>
+          <div class="criterion-framework">${escapeHtml(criterion.criterion_id)} · ${escapeHtml(criterion.function)}</div>
+        </div>
+        <span class="score-badge" style="background:${scoreColor(criterion.score)}">${criterion.score} / 5</span>
+      </div>
+    </div>`;
+}
+
+function showMentorInput(show) {
+  document.getElementById('mentor-input-row').classList.toggle('hidden', !show);
+  document.getElementById('mentor-done-wrap').classList.toggle('hidden', show);
+}
+
+document.getElementById('start-mentoring-btn').addEventListener('click', async () => {
+  try {
+    const data = await api(`api/audits/${currentSessionId}/mentor/start`, { method: 'POST' });
+    if (data.done) {
+      alert('No red or amber findings on this audit, nothing to mentor on.');
+      return;
+    }
+    document.getElementById('mentor-thread').innerHTML = '';
+    renderMentorProgress(data.index, data.total);
+    renderMentorCriterion(data.criterion);
+    addChatBubble('assistant', data.message, 'mentor-thread');
+    showMentorInput(true);
+    document.getElementById('mentor-answer').value = '';
+    showStage(stageMentor);
+  } catch (err) {
+    alert(`Couldn't start mentoring: ${err.message}`);
+  }
+});
+
+async function sendMentorAnswer() {
+  const input = document.getElementById('mentor-answer');
+  const answer = input.value.trim();
+  if (!answer) return;
+  addChatBubble('user', answer, 'mentor-thread');
+  input.value = '';
+
+  try {
+    const data = await api(`api/audits/${currentSessionId}/mentor/answer`, {
+      method: 'POST',
+      body: JSON.stringify({ answer }),
+    });
+
+    if (data.closing_message) addChatBubble('assistant', data.closing_message, 'mentor-thread');
+    if (data.action_item) {
+      addChatBubble('assistant', `Action: ${data.action_item.action}${data.action_item.owner ? ' (owner: ' + data.action_item.owner + ')' : ''}, due ${data.action_item.due_date}.`, 'mentor-thread');
+    }
+
+    if (data.done) {
+      showMentorInput(false);
+      return;
+    }
+
+    renderMentorProgress(data.index, data.total);
+    renderMentorCriterion(data.criterion);
+    addChatBubble('assistant', data.message, 'mentor-thread');
+  } catch (err) {
+    addChatBubble('assistant', `Something went wrong: ${err.message}`, 'mentor-thread');
+  }
+}
+
+document.getElementById('mentor-send-btn').addEventListener('click', sendMentorAnswer);
+document.getElementById('mentor-answer').addEventListener('keydown', e => {
+  if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); sendMentorAnswer(); }
+});
+
+document.getElementById('mentor-back-btn').addEventListener('click', async () => {
+  const full = await api(`api/audits/${currentSessionId}`);
+  renderResults(full);
+  showStage(stageResults);
+});
 
 async function openExistingAudit(id) {
   try {

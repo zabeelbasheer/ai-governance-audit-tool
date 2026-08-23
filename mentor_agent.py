@@ -70,6 +70,7 @@ def get_mentor_opening(criterion: dict, use_case: str) -> str:
         ],
         temperature=0.3,
         max_tokens=250,
+        reasoning_effort="low",
     )
     return response.choices[0].message.content.strip()
 
@@ -94,6 +95,7 @@ def get_mentor_response(criterion: dict, conversation_history: list) -> str:
         messages=messages,
         temperature=0.3,
         max_tokens=250,
+        reasoning_effort="low",
     )
     return response.choices[0].message.content.strip()
 
@@ -122,6 +124,8 @@ def generate_action_item(criterion: dict, user_answer: str) -> dict:
         ],
         temperature=0.2,
         max_tokens=200,
+        response_format={"type": "json_object"},
+        reasoning_effort="low",
     )
 
     raw = response.choices[0].message.content.strip()

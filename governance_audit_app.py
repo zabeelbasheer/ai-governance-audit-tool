@@ -12,6 +12,7 @@ left in place until phases 3 and 4 are ported.
 import os
 import threading
 from contextlib import asynccontextmanager
+from datetime import datetime, timedelta
 
 from fastapi import FastAPI, Request, HTTPException
 from fastapi.responses import FileResponse
@@ -21,14 +22,16 @@ from starlette.middleware.sessions import SessionMiddleware
 from db import (
     init_db, get_sessions_for_user, get_all_sessions,
     create_audit_session, update_session_vendor, update_session_enriched,
-    update_session_scores, get_session, save_audit_results,
+    update_session_scores, update_session_status, get_session, save_audit_results,
     get_audit_results, save_intake_message, get_intake_messages,
+    save_checklist_items, get_checklist,
 )
 from auth import verify_credentials, ROLE_LABELS
 from vendor_detector import detect_vendor_llm, get_all_vendor_options
 from vendor_kb import VENDOR_KB
 from intake_agent import get_opening_question, get_next_question, enrich_use_case, build_history_for_llm
 from evaluator import run_evaluation
+from mentor_agent import get_mentor_opening, get_mentor_response, generate_action_item
 
 
 @asynccontextmanager
@@ -289,6 +292,128 @@ def get_audit(session_id: int, request: Request):
     if not session:
         raise HTTPException(status_code=404, detail="Audit session not found.")
     return {"session": session, "results": get_audit_results(session_id)}
+
+
+# ── Phase 3: mentor flow ──────────────────────────────────────────────────────
+
+MENTOR_STATE: dict[int, dict] = {}
+
+
+def _red_amber_criteria(session_id: int) -> list[dict]:
+    """Criteria scoring 3 or below, the same red/amber threshold evaluator.py uses."""
+    return [r for r in get_audit_results(session_id) if r["score"] <= 3]
+
+
+@app.post("/api/audits/{session_id}/mentor/start")
+def start_mentoring(session_id: int, request: Request):
+    user = request.session.get("user")
+    if not user:
+        raise HTTPException(status_code=401, detail="Not signed in.")
+
+    session = get_session(session_id)
+    if not session:
+        raise HTTPException(status_code=404, detail="Audit session not found.")
+    if session["status"] not in ("scored", "mentoring"):
+        raise HTTPException(status_code=400, detail="This audit hasn't been scored yet.")
+
+    gaps = _red_amber_criteria(session_id)
+    if not gaps:
+        update_session_status(session_id, "complete")
+        return {"done": True, "no_gaps": True}
+
+    use_case = session.get("use_case_enriched") or session["use_case_raw"]
+    MENTOR_STATE[session_id] = {"gaps": gaps, "index": 0, "items": [], "use_case": use_case}
+    update_session_status(session_id, "mentoring")
+
+    current = gaps[0]
+    try:
+        opening = get_mentor_opening(current, use_case)
+    except Exception as e:
+        raise HTTPException(status_code=502, detail=f"Couldn't reach the mentor model. Try again. ({e})")
+
+    MENTOR_STATE[session_id]["current_opening"] = opening
+
+    return {
+        "done": False,
+        "index": 0,
+        "total": len(gaps),
+        "criterion": current,
+        "message": opening,
+    }
+
+
+class MentorAnswerBody(BaseModel):
+    answer: str
+
+
+@app.post("/api/audits/{session_id}/mentor/answer")
+def mentor_answer(session_id: int, body: MentorAnswerBody, request: Request):
+    if not request.session.get("user"):
+        raise HTTPException(status_code=401, detail="Not signed in.")
+
+    state = MENTOR_STATE.get(session_id)
+    if not state:
+        raise HTTPException(status_code=400, detail="No mentoring session in progress, start one first.")
+    if not body.answer.strip():
+        raise HTTPException(status_code=400, detail="Answer can't be empty.")
+
+    current = state["gaps"][state["index"]]
+    answer = body.answer.strip()
+
+    try:
+        closing = get_mentor_response(
+            current,
+            [
+                {"role": "assistant", "content": state.get("current_opening", "")},
+                {"role": "user", "content": answer},
+            ],
+        )
+    except Exception as e:
+        raise HTTPException(status_code=502, detail=f"Couldn't reach the mentor model. Try again. ({e})")
+
+    try:
+        action_item = generate_action_item(current, answer)
+    except Exception as e:
+        raise HTTPException(status_code=502, detail=f"Couldn't generate the action item. Try again. ({e})")
+
+    due_days = action_item.get("due_days") or 30
+    action_item["due_date"] = (datetime.now() + timedelta(days=due_days)).strftime("%Y-%m-%d")
+
+    state["items"].append(action_item)
+    save_checklist_items(session_id, state["items"])
+
+    state["index"] += 1
+    if state["index"] >= len(state["gaps"]):
+        update_session_status(session_id, "complete")
+        del MENTOR_STATE[session_id]
+        return {"done": True, "closing_message": closing, "action_item": action_item}
+
+    next_criterion = state["gaps"][state["index"]]
+    try:
+        next_opening = get_mentor_opening(next_criterion, state["use_case"])
+    except Exception as e:
+        raise HTTPException(status_code=502, detail=f"Couldn't reach the mentor model. Try again. ({e})")
+    state["current_opening"] = next_opening
+
+    return {
+        "done": False,
+        "index": state["index"],
+        "total": len(state["gaps"]),
+        "criterion": next_criterion,
+        "message": next_opening,
+        "closing_message": closing,
+        "action_item": action_item,
+    }
+
+
+@app.get("/api/audits/{session_id}/checklist")
+def get_audit_checklist(session_id: int, request: Request):
+    if not request.session.get("user"):
+        raise HTTPException(status_code=401, detail="Not signed in.")
+    session = get_session(session_id)
+    if not session:
+        raise HTTPException(status_code=404, detail="Audit session not found.")
+    return {"items": get_checklist(session_id)}
 
 
 @app.get("/")
