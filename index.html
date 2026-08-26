@@ -215,6 +215,19 @@ tbody tr:hover { background: var(--parchment); }
 }
 .btn-open:hover { border-color: var(--gold); color: var(--amber); }
 
+.actions-cell { white-space: nowrap; }
+.actions-cell-inner { display: inline-flex; align-items: center; gap: 6px; }
+.btn-delete {
+  background: transparent;
+  border: 1px solid #e0b3ac;
+  color: #c0392b;
+  border-radius: 6px;
+  padding: 5px 10px;
+  font-size: 11px;
+  cursor: pointer;
+}
+.btn-delete:hover { background: #fdf2f1; border-color: #c0392b; }
+
 .empty-state { background: var(--white); border-radius: 12px; padding: 40px; text-align: center; color: var(--sky); font-size: 13px; }
 
 /* ── New audit flow ────────────────────────────────────────────────────── */
@@ -519,7 +532,7 @@ function renderSessions(data) {
     const dateStr = (s.created_at || '').slice(0, 10);
 
     const canDelete = currentUser && (currentUser.role === 'admin' || s.user_id === currentUser.id);
-    const deleteBtn = canDelete ? `<button class="btn-open" data-delete-id="${s.id}" style="margin-left:6px; color:#c0392b; border-color:#c0392b;">Delete</button>` : '';
+    const deleteBtn = canDelete ? `<button class="btn-delete" data-delete-id="${s.id}">Delete</button>` : '';
 
     return `<tr>
       <td>
@@ -534,7 +547,7 @@ function renderSessions(data) {
       <td>${score}</td>
       <td>${maturity}</td>
       <td><span class="status-dot ${statusClass}">${escapeHtml(statusLabel)}</span></td>
-      <td><button class="btn-open" data-id="${s.id}">Open</button>${deleteBtn}</td>
+      <td class="actions-cell"><span class="actions-cell-inner"><button class="btn-open" data-id="${s.id}">Open</button>${deleteBtn}</span></td>
     </tr>`;
   }).join('');
 
