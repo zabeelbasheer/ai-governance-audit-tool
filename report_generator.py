@@ -112,7 +112,7 @@ def generate_pdf_report(session: dict, results: list, checklist_items: list) -> 
     story.append(score_table)
     story.append(Spacer(1, 6))
 
-    critical = [r for r in results if r.get("critical_flag")]
+    critical = [r for r in results if r.get("critical_flag") and not r.get("unscored")]
     if critical:
         story.append(Paragraph(
             "CRITICAL BLOCKERS — address before deployment",
@@ -131,10 +131,14 @@ def generate_pdf_report(session: dict, results: list, checklist_items: list) -> 
     for fn, rows in groups.items():
         story.append(Paragraph(fn, s["function_label"]))
         for r in rows:
+            unscored = bool(r.get("unscored"))
             score = r.get("score", 1)
-            badge = Table([[str(score)]], colWidths=[0.3 * inch], rowHeights=[0.22 * inch])
+            # "n/e" rather than a number: an unevaluated criterion is a gap
+            # in the audit, not a low score for the system under review.
+            badge_text = "n/e" if unscored else str(score)
+            badge = Table([[badge_text]], colWidths=[0.3 * inch], rowHeights=[0.22 * inch])
             badge.setStyle(TableStyle([
-                ("BACKGROUND", (0, 0), (0, 0), SCORE_COLORS.get(score, SKY)),
+                ("BACKGROUND", (0, 0), (0, 0), SKY if unscored else SCORE_COLORS.get(score, SKY)),
                 ("TEXTCOLOR", (0, 0), (0, 0), WHITE),
                 ("ALIGN", (0, 0), (0, 0), "CENTER"),
                 ("VALIGN", (0, 0), (0, 0), "MIDDLE"),
@@ -236,6 +240,20 @@ def generate_text_report(eval_result: dict) -> str:
             lines.append(f"  {r['rationale']}")
             if r["remediation"]:
                 lines.append(f"  → {r['remediation']}")
+            lines.append("")
+
+    # Listed separately and never inside a risk band. An unevaluated
+    # criterion is a gap in the audit, not a finding about the system.
+    not_evaluated = eval_result.get("unscored_items") or []
+    if not_evaluated:
+        lines.append("NOT EVALUATED — excluded from the score")
+        lines.append("-" * 40)
+        lines.append("  These criteria did not complete. They are excluded from the")
+        lines.append("  percentage above and must not be read as failing scores.")
+        lines.append("")
+        for r in not_evaluated:
+            lines.append(f"  [{r['criterion_id']}] {r['criterion_name']}  —  NOT EVALUATED  |  {r['function']}")
+            lines.append(f"  {r['rationale']}")
             lines.append("")
 
     lines.append("=" * 70)

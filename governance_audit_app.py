@@ -359,8 +359,11 @@ MENTOR_STATE: dict[int, dict] = {}
 
 
 def _red_amber_criteria(session_id: int) -> list[dict]:
-    """Criteria scoring 3 or below, the same red/amber threshold evaluator.py uses."""
-    return [r for r in get_audit_results(session_id) if r["score"] <= 3]
+    """Criteria scoring 3 or below, the same red/amber threshold evaluator.py uses.
+    Unscored criteria are excluded: they are stored with a sentinel score of 0,
+    and mentoring a criterion that never evaluated would invent a gap."""
+    return [r for r in get_audit_results(session_id)
+            if not r.get("unscored") and r["score"] <= 3]
 
 
 @app.post("/api/audits/{session_id}/mentor/start")

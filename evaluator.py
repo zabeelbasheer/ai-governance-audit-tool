@@ -123,6 +123,7 @@ def evaluate_criterion(client: Groq, use_case: str, criterion: dict,
                        vendor_note: str = None,
                        vendor_name: str = None) -> dict:
     score = critical_flag = rationale = remediation = None
+    unscored = False
     max_retries = 4
     max_completion = 300
 
@@ -161,10 +162,11 @@ def evaluate_criterion(client: Groq, use_case: str, criterion: dict,
 
         except RateLimitError as e:
             if attempt == max_retries - 1:
-                score         = 1
+                unscored      = True
+                score         = None
                 critical_flag = False
-                rationale     = f"Evaluation failed after {max_retries} attempts, still rate limited ({e}) — defaulting to lowest score."
-                remediation   = "Re-run evaluation or assess this criterion manually."
+                rationale     = f"NOT EVALUATED — rate limited after {max_retries} attempts ({e}). This is a tool fault, not a governance finding."
+                remediation   = "Re-run this criterion. Do not interpret as a failing score."
                 break
             # Groq's retry-after can be milliseconds ("try again in 7.5ms"),
             # which describes when that token count frees up, not when the
@@ -179,10 +181,11 @@ def evaluate_criterion(client: Groq, use_case: str, criterion: dict,
             time.sleep(wait)
 
         except Exception as e:
-            score         = 1
+            unscored      = True
+            score         = None
             critical_flag = False
-            rationale     = f"Evaluation failed ({e}) — defaulting to lowest score."
-            remediation   = "Re-run evaluation or assess this criterion manually."
+            rationale     = f"NOT EVALUATED — {e}. This is a tool fault, not a governance finding."
+            remediation   = "Re-run this criterion. Do not interpret as a failing score."
             break
 
     return {
@@ -191,8 +194,10 @@ def evaluate_criterion(client: Groq, use_case: str, criterion: dict,
         "rationale":      rationale,
         "critical_flag":  critical_flag,
         "remediation":    remediation,
-        "weighted_score": score * criterion["weight"],
+        # Unscored criteria contribute nothing to either side of the ratio.
+        "weighted_score": 0 if unscored else score * criterion["weight"],
         "vendor_baseline": vendor_baseline,
+        "unscored":       unscored,
     }
 
 
@@ -243,31 +248,54 @@ def run_evaluation(use_case: str, progress_callback=None,
     # Reassemble in the original criteria order, not completion order.
     results = [results_by_id[c["id"]] for c in CRITERIA]
 
-    total_weighted = sum(r["weighted_score"] for r in results)
-    max_weighted   = sum(c["weight"] * 5 for c in CRITERIA)
-    overall_pct    = round((total_weighted / max_weighted) * 100, 1)
+    scored   = [r for r in results if not r.get("unscored")]
+    unscored = [r for r in results if r.get("unscored")]
+
+    # A criterion that never evaluated is excluded from both sides of the
+    # ratio. Leaving it in the denominator at score 1 renders a tool fault
+    # as a governance failure, which is what put GOV-4 on the front page of
+    # the 10 Sep Athens report as a CRITICAL BLOCKER.
+    total_weighted = sum(r["weighted_score"] for r in scored)
+    max_weighted   = sum(r["weight"] * 5 for r in scored)
+    overall_pct    = round((total_weighted / max_weighted) * 100, 1) if max_weighted else 0.0
 
     band = next(
         (b for b in MATURITY_BANDS if b[0] <= overall_pct < b[1]),
         MATURITY_BANDS[-1]
     )
+    maturity_label = band[2]
+    maturity_desc  = band[4]
 
-    red_items      = [r for r in results if r["score"] <= 2]
-    amber_items    = [r for r in results if r["score"] == 3]
-    green_items    = [r for r in results if r["score"] >= 4]
-    critical_items = [r for r in results if r["critical_flag"]]
+    # Any gap in coverage makes the headline number provisional, and the
+    # report has to say so rather than presenting a partial audit as whole.
+    if unscored:
+        missing = ", ".join(r["id"] for r in unscored)
+        maturity_label = f"{maturity_label} (provisional)"
+        maturity_desc = (
+            f"{maturity_desc} Scored on {len(scored)} of {len(results)} criteria — "
+            f"{missing} did not evaluate and are excluded. Re-run before relying on this figure."
+        )
+
+    red_items      = [r for r in scored if r["score"] <= 2]
+    amber_items    = [r for r in scored if r["score"] == 3]
+    green_items    = [r for r in scored if r["score"] >= 4]
+    critical_items = [r for r in scored if r["critical_flag"]]
 
     return {
         "use_case":       use_case,
         "results":        results,
         "overall_pct":    overall_pct,
-        "maturity_label": band[2],
+        "maturity_label": maturity_label,
         "maturity_color": band[3],
-        "maturity_desc":  band[4],
+        "maturity_desc":  maturity_desc,
         "critical_items": critical_items,
         "red_items":      red_items,
         "amber_items":    amber_items,
         "green_items":    green_items,
+        "unscored_items": unscored,
+        "criteria_scored": len(scored),
+        "criteria_total":  len(results),
+        "is_complete":     not unscored,
         "vendor_key":     vendor_key,
         "vendor_name":    vendor_name,
     }

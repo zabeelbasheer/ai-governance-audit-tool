@@ -64,6 +64,7 @@ def init_db():
         criterion_name TEXT NOT NULL,
         function       TEXT NOT NULL,
         score          INTEGER NOT NULL,
+        unscored       INTEGER NOT NULL DEFAULT 0,
         rationale      TEXT,
         critical_flag  INTEGER NOT NULL DEFAULT 0,
         remediation    TEXT,
@@ -96,6 +97,18 @@ def init_db():
         s = statement.strip()
         if s:
             conn.execute(s)
+    conn.commit()
+
+    # Idempotent column migrations. CREATE TABLE IF NOT EXISTS does nothing
+    # for databases that already exist, so new columns have to be added
+    # explicitly or a deploy breaks against the live volume.
+    _migrations = [
+        ("audit_results", "unscored", "INTEGER NOT NULL DEFAULT 0"),
+    ]
+    for table, column, spec in _migrations:
+        existing = {r[1] for r in conn.execute(f"PRAGMA table_info({table})")}
+        if column not in existing:
+            conn.execute(f"ALTER TABLE {table} ADD COLUMN {column} {spec}")
     conn.commit()
 
     # Migration: soft-delete columns, added after the table already existed in
@@ -287,11 +300,13 @@ def save_audit_results(session_id: int, results: list):
         conn.execute(
             """INSERT INTO audit_results
                (session_id, criterion_id, criterion_name, function, score,
-                rationale, critical_flag, remediation, weighted_score, weight)
-               VALUES (?,?,?,?,?,?,?,?,?,?)""",
-            (session_id, r["id"], r["name"], r["function"], r["score"],
+                rationale, critical_flag, remediation, weighted_score, weight,
+                unscored)
+               VALUES (?,?,?,?,?,?,?,?,?,?,?)""",
+            (session_id, r["id"], r["name"], r["function"],
+             0 if r.get("unscored") else r["score"],
              r["rationale"], int(r["critical_flag"]), r["remediation"],
-             r["weighted_score"], r["weight"])
+             r["weighted_score"], r["weight"], int(bool(r.get("unscored"))))
         )
     conn.commit()
     conn.close()
