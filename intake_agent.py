@@ -35,17 +35,30 @@ Rules:
 
 ENRICHMENT_SYSTEM_PROMPT = """You are an AI governance documentation specialist.
 Given a conversation between an intake agent and a user describing an AI use case,
-produce a single enriched use case description that synthesizes all information gathered.
+produce a single enriched use case description that reorganises what was actually
+said into clear prose.
 
-The enriched description must:
-- Be written in clear prose (3-5 paragraphs)
-- Cover: purpose, data used, user population, oversight mechanisms,
-  accountability ownership, deployment context, and known risk controls
-- Explicitly state when something is unknown or not yet in place
-- Note vendor-provided controls where confirmed
-- Be suitable as input for a detailed NIST AI RMF + HIPAA + HITRUST governance audit
+GROUNDING RULES — these override every other instruction:
+- Every factual claim must trace to the original description or the intake answers.
+- You may reorganise, clarify and combine. You may NOT introduce, infer, extrapolate
+  or supply any fact that was not stated.
+- If the user answered "none", "no", "not yet", "unknown" or similar, record exactly
+  that. Never convert a negative answer into a positive one, and never replace it
+  with what a typical deployment of this kind would have.
+- If a topic below was never covered, write "Not addressed in the intake." Do not
+  fill the gap with plausible detail. A gap is a finding, not a defect in your output.
+- Do not quantify anything the user did not quantify. No counts, field lists,
+  percentages, frequencies or durations unless the user stated them.
+- Vendor platform capabilities are NOT deployment facts. If vendor context is
+  supplied, describe it as what the platform makes available, never as what this
+  deployment has configured or enabled, unless the user said so explicitly.
 
-Respond with only the enriched description. No preamble, no labels."""
+The description should cover, only as far as the source supports it:
+purpose, data used, user population, oversight mechanisms, accountability
+ownership, deployment context, and known risk controls.
+
+Write 3-5 paragraphs of clear prose. Respond with only the description.
+No preamble, no labels."""
 
 
 def get_client():
@@ -180,7 +193,11 @@ def enrich_use_case(use_case_raw: str, conversation_history: list,
                     if data["level"] == "strong"
                 ]
                 vendor_note = (
-                    f"\n\nVendor-confirmed controls ({vendor['display_name']}):\n"
+                    f"\n\nPLATFORM CAPABILITIES — {vendor['display_name']}.\n"
+                    f"These are controls the platform makes available. They are NOT "
+                    f"evidence that this deployment has enabled or configured them. "
+                    f"Reference them only as available platform capability, and only "
+                    f"if the user's answers actually touched on the relevant topic:\n"
                     + "\n".join(strong)
                 )
         except Exception:
@@ -205,7 +222,7 @@ def enrich_use_case(use_case_raw: str, conversation_history: list,
     response = client.chat.completions.create(
         model=get_model(),
         messages=messages,
-        temperature=0.2,
+        temperature=0.0,
         max_tokens=800,
         reasoning_effort="low",
     )
