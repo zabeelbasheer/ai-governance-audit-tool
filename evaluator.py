@@ -8,7 +8,9 @@ deployment-specific context.
 
 import json
 import os
+import random
 import time
+from collections import deque
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from threading import Lock
 from groq import Groq, RateLimitError
@@ -16,6 +18,50 @@ from criteria import CRITERIA, MATURITY_BANDS
 from dotenv import load_dotenv
 
 load_dotenv()
+
+# Groq enforces tokens-per-minute as a rolling 60s window, not an
+# in-flight cap. A full 24-criterion audit costs roughly 24 * 1600 =
+# ~38k tokens, which cannot fit in one minute at any concurrency level.
+# Workers therefore have to pace against a shared budget rather than
+# race each other into 429s.
+TPM_LIMIT = int(os.getenv("GROQ_TPM_LIMIT", "8000"))
+TPM_SAFETY = 0.85  # leave headroom; estimates are approximate by nature
+
+
+class _TokenBudget:
+    """Rolling-window token gate shared across evaluation threads."""
+
+    def __init__(self, limit_per_min: int, window: float = 60.0):
+        self.budget = max(1, int(limit_per_min * TPM_SAFETY))
+        self.window = window
+        self._spent = deque()  # (timestamp, tokens)
+        self._lock = Lock()
+
+    def _trim(self, now: float):
+        while self._spent and now - self._spent[0][0] >= self.window:
+            self._spent.popleft()
+
+    def reserve(self, tokens: int):
+        """Block until `tokens` fit inside the rolling window, then record them."""
+        while True:
+            with self._lock:
+                now = time.monotonic()
+                self._trim(now)
+                in_window = sum(t for _, t in self._spent)
+                if in_window + tokens <= self.budget or not self._spent:
+                    self._spent.append((now, tokens))
+                    return
+                # Wait only until the oldest entry ages out of the window.
+                sleep_for = self.window - (now - self._spent[0][0])
+            time.sleep(max(0.05, min(sleep_for, self.window)) + random.uniform(0, 0.25))
+
+
+_budget = _TokenBudget(TPM_LIMIT)
+
+
+def _estimate_tokens(system_prompt: str, user_prompt: str, max_completion: int) -> int:
+    """Rough token estimate (~4 chars/token) plus the reserved completion."""
+    return (len(system_prompt) + len(user_prompt)) // 4 + max_completion
 
 
 def get_client():
@@ -78,19 +124,25 @@ def evaluate_criterion(client: Groq, use_case: str, criterion: dict,
                        vendor_name: str = None) -> dict:
     score = critical_flag = rationale = remediation = None
     max_retries = 4
+    max_completion = 300
+
+    user_prompt = build_user_prompt(
+        use_case, criterion, vendor_baseline, vendor_note, vendor_name
+    )
+    est_tokens = _estimate_tokens(SYSTEM_PROMPT, user_prompt, max_completion)
 
     for attempt in range(max_retries):
         try:
+            # Wait for room in the rolling TPM window before spending it.
+            _budget.reserve(est_tokens)
             response = client.chat.completions.create(
                 model=os.getenv("MODEL_NAME", "openai/gpt-oss-120b"),
                 messages=[
                     {"role": "system", "content": SYSTEM_PROMPT},
-                    {"role": "user",   "content": build_user_prompt(
-                        use_case, criterion, vendor_baseline, vendor_note, vendor_name
-                    )},
+                    {"role": "user",   "content": user_prompt},
                 ],
                 temperature=0.1,
-                max_tokens=300,
+                max_tokens=max_completion,
                 response_format={"type": "json_object"},
                 reasoning_effort="low",
             )
@@ -114,8 +166,16 @@ def evaluate_criterion(client: Groq, use_case: str, criterion: dict,
                 rationale     = f"Evaluation failed after {max_retries} attempts, still rate limited ({e}) — defaulting to lowest score."
                 remediation   = "Re-run evaluation or assess this criterion manually."
                 break
+            # Groq's retry-after can be milliseconds ("try again in 7.5ms"),
+            # which describes when that token count frees up, not when the
+            # window has room for a full call. Floor it, and jitter so
+            # concurrent workers don't all retry into the same collision.
             retry_after = e.response.headers.get("retry-after")
-            wait = float(retry_after) + 1 if retry_after else 12
+            try:
+                hinted = float(retry_after) if retry_after else 0.0
+            except (TypeError, ValueError):
+                hinted = 0.0
+            wait = max(hinted + 1, 8.0) + random.uniform(0, 2.0)
             time.sleep(wait)
 
         except Exception as e:
@@ -168,7 +228,9 @@ def run_evaluation(use_case: str, progress_callback=None,
             vendor_name=vendor_name,
         )
 
-    with ThreadPoolExecutor(max_workers=3) as pool:
+    # Throughput is capped by TPM, not by worker count. Two workers keep
+    # some latency overlap while the shared budget gate does the pacing.
+    with ThreadPoolExecutor(max_workers=2) as pool:
         futures = [pool.submit(_run_one, c) for c in CRITERIA]
         for future in as_completed(futures):
             criterion, result = future.result()
