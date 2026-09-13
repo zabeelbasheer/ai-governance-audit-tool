@@ -223,7 +223,14 @@ def update_session_vendor(session_id: int, vendor_name: str):
 
 def get_session(session_id: int):
     conn = get_conn()
-    row = conn.execute("SELECT * FROM audit_sessions WHERE id = ?", (session_id,)).fetchone()
+    # Joined to users because the report cover reads display_name/email off
+    # this row. A bare SELECT * left "Submitted by ()" empty on every PDF.
+    row = conn.execute(
+        """SELECT s.*, u.display_name, u.email
+           FROM audit_sessions s JOIN users u ON s.user_id = u.id
+           WHERE s.id = ?""",
+        (session_id,)
+    ).fetchone()
     conn.close()
     return dict(row) if row else None
 
